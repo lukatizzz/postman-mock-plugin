@@ -80,6 +80,18 @@ Phát hiện thêm từ spec thật:
 - ⚠️ Khi dừng mock: chỉ dừng tiến trình `postman ... mock run` của mình; **không** kill mọi `postman.exe` (sẽ tắt app desktop).
 - Chưa kiểm chứng: bấm Start mock trong **app desktop** (Local View + Native Git) – cần bạn mở app thử.
 
+## Code mock chỉ lưu trên cloud (Mocks của Postman) – cách plugin dùng hiện nay
+
+- `app-mock.mjs cloud-push <definition.json>`: `postman mock generate` vào thư mục tạm → thêm scenario / base path → `postman mock push -w <ws>` → xoá thư mục tạm. Dự án chỉ giữ file định nghĩa (git-ignore).
+- Gói Free: tạo, cập nhật, chạy code mock trên cloud đều OK (`deploy` mới cần gói trả phí).
+- Petstore: tạo mới (`created: true`), cập nhật cùng mock (`created: false`), scenario `pet-sold` qua `x-mock-scenario`, base path `/v1` ✅ – chạy bằng `postman mock run <mockId>` sau khi đã xoá mọi bản local.
+- JumpApp: code mock `c35968af…` từ collection + `basePath /api/v1` + scenario `qa-edge-cases` → **96/96** endpoint đúng, scenario ✅, `x-mock-response-code` ✅.
+- Phát hiện:
+  - `postman mock generate --collection <uid> -w <ws>` tạo mock liên kết collection nhưng **không push đè được** (`A scenario with this name already exists`) → plugin luôn tạo mock bằng push.
+  - `postman mock push` ghi ánh xạ path → mockId vào `<cwd>/.postman/resources.yaml`; chạy trong repo sẽ làm bẩn file liên kết Git của app → plugin chạy push trong thư mục tạm và tự ghi ánh xạ ở đó.
+  - Push **không xoá** scenario đã bỏ → `retiredScenarios` đưa scenario về hành vi default; xoá hẳn trong app.
+  - Nguồn spec giữ server path trong route (`/v1/pets`), nguồn collection thì mất → `basePath` chỉ áp cho nguồn collection.
+
 ## Chưa kiểm chứng trong PoC
 - Gọi qua **Postman MCP server** (session này chưa nạp MCP; PoC dùng REST endpoint tương đương). Cần cài plugin vào Claude Code và chạy lại luồng bằng skill.
 - Tool MCP `createCollectionResponse` có nhận định dạng v1 không (nếu không → skill luôn dùng script).

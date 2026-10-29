@@ -19,6 +19,7 @@ Helper scripts live in the plugin's `scripts/` folder, two levels above this fil
    Do not ask the user to paste the key into the chat.
 3. **Postman MCP**: confirm the `postman` MCP server tools are available (e.g. `getWorkspaces`, `createMock`, `updateCollectionResponse`, `getAsyncSpecTaskStatus`). If the last two are missing, the server runs the *minimal* toolset; the plugin needs the *full* toolset (233 tools) at `https://mcp.postman.com/mcp`.
    If the MCP tools are not loaded in this session (e.g. the key was set after the app started), the same server is reachable through `node <scripts>/mcp-call.mjs list|schema|call ...`; restarting the app loads the tools natively.
+3b. **Postman CLI** (only for code mocks, skill **mock-app**): `postman --version`; if missing, `npm install -g postman-cli`. If `postman mock list -w <workspaceId>` says it is not logged in, ask the user to run `postman login --with-api-key <key>` in their terminal.
 4. **Usage** (free plan budget): run `node <scripts>/postman-rest.mjs me` and show the `usage` rows (API calls and mock calls used / limit this month).
 5. **Workspace**: call `getWorkspaces`; let the user pick one (default: their personal workspace). Do not create a workspace unless asked.
 6. **State file**: create `.postman-mock/state.json` if missing (schema in `references/state.md`) with `workspaceId` filled in. Add `.postman-mock/` to the project's `.gitignore` (free plan = 1 user, so state is personal).

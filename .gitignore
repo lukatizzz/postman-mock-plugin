@@ -5,6 +5,10 @@
 jumpapp/
 poc/
 
+# Postman app Git link (Native Git) and its local mocks: per-user, may contain internal API data
+.postman/
+postman/
+
 node_modules/
 .env
 *.log

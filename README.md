@@ -115,24 +115,36 @@ curl -H "x-api-key: <POSTMAN_API_KEY>" https://<id>.mock.pstmn.io/api/v1/tasks
 | Làm chậm | `x-mock-response-delay: 2000` |
 | Mock private | `x-api-key: <key>` (bắt buộc) |
 
-## 4. Cách 2 – Mock chạy trên máy (không tốn quota)
+## 4. Cách 2 – Code mock trong Mocks của Postman (cloud)
 
-### 4a. Mock local của plugin (nhẹ nhất)
-*"Chạy mock local"* (`/postman-mock:mock-local`) → `http://localhost:4010/api/v1/...`. Không cần `x-api-key`; các header ở bảng trên vẫn dùng được.
+Code mock (JavaScript, có scenario, tuỳ chọn stateful) được tạo **thẳng trong workspace cloud** – hiện ở mục **Mocks** của app Postman. Dự án không chứa file code nào, chỉ có một file định nghĩa nhỏ `.postman-mock/code-mocks/<tên>.json` (đã git-ignore). Dùng được với gói Free.
 
-### 4b. Mock JavaScript của app Postman (scenario + có thể giữ dữ liệu giữa các request)
-1. *"Tạo mock app Postman từ collection/spec, có stateful"* (`/postman-mock:mock-app`) → `postman/mocks/<tên>/config.yaml` + `default.js`
-2. Thêm scenario: *"Thêm scenario `qa-edge-cases`: /constructions/99999999 trả 404"*
-3. Chạy:
-   - CLI: `postman mock run postman/mocks/<tên>`
-   - App Postman desktop *(chưa kiểm chứng; nhãn trong app có thể khác)*: kết nối thư mục Git của dự án (Native Git) → **Local View** → **Mocks** → chọn mock → **Start**. Port lấy từ `config.yaml`. Không thấy mock → đặt `postman/mocks` ở **gốc repo**.
-4. Gọi: `http://localhost:<port>/...`; chọn scenario bằng header `x-mock-scenario: <tên>`.
-
-Ví dụ có sẵn trong repo (Petstore):
+Lần đầu: đăng nhập Postman CLI (tự gõ trong terminal, không dán key vào chat):
 ```bash
-postman mock run local-mock-poc/postman/mocks/petstore-static
-curl -H "x-mock-scenario: pet-sold" http://localhost:4501/v1/pets/1
+postman login --with-api-key <POSTMAN_API_KEY>
 ```
+
+1. *"Tạo code mock trên Postman cho JumpApp, có scenario `qa-edge-cases`: /constructions/99999999 trả 404, /tasks?searchWord=none trả list rỗng"* (`/postman-mock:mock-app`)
+   → Claude ghi định nghĩa rồi chạy `app-mock.mjs cloud-push`: dựng code ở thư mục tạm, đẩy lên cloud, xoá thư mục tạm. Kết quả: `mockId` và link mở mock trong Postman.
+2. Sửa / thêm scenario: nói tiếp với Claude → `cloud-push` lại → cập nhật **đúng mock đó**.
+3. Chạy mock (code tải từ cloud):
+   - CLI: `postman mock run <mockId> --port 4520`
+   - Hoặc mở mock trong app Postman (Mocks) và Start.
+4. Gọi:
+   ```bash
+   curl http://localhost:4520/api/v1/tasks
+   curl -H "x-mock-scenario: qa-edge-cases" http://localhost:4520/api/v1/constructions/99999999
+   curl -H "x-mock-response-code: 401" http://localhost:4520/api/v1/tasks
+   ```
+
+Lưu ý:
+- Không gửi `x-mock-scenario` → scenario default; tên scenario sai → cũng rơi về default.
+- Push không xoá được scenario trên cloud: bỏ scenario khỏi định nghĩa + thêm vào `retiredScenarios` (về hành vi default), muốn xoá hẳn thì xoá trong app.
+- Đưa code mock thành URL công khai (`postman mock deploy`) cần gói Solo/Team/Enterprise.
+- Mẫu định nghĩa: [postman-mock-plugin/examples/petstore-code-mock.json](postman-mock-plugin/examples/petstore-code-mock.json)
+
+### Mock local của plugin (không cần Postman, gọi không giới hạn)
+*"Chạy mock local"* (`/postman-mock:mock-local`) → `http://localhost:4010/api/v1/...`. Không cần `x-api-key`; các header ở mục 3 vẫn dùng được.
 
 ## 5. Xử lý sự cố
 
@@ -146,4 +158,6 @@ curl -H "x-mock-scenario: pet-sold" http://localhost:4501/v1/pets/1
 | `x-mock-response-name` tiếng Nhật không ăn | Postman chỉ khớp tên ASCII → dùng `x-mock-response-code` |
 | Mock bỗng gọi được không cần key | `updateMock` thiếu `private` → nhờ Claude *"đặt lại mock về private"* |
 | Dừng mock local | Ctrl+C ở cửa sổ đang chạy. **Đừng** kill mọi tiến trình `postman` (Windows: `Stop-Process -Name postman`; Mac: `pkill -i postman` / `killall Postman`) – sẽ tắt luôn app desktop. Mac: tìm đúng tiến trình bằng `lsof -i :4501` rồi `kill <PID>` |
-| Spec lớn sinh mock app có body `<Error: Too many levels of nesting…>` | Sinh từ collection thay vì spec (skill `mock-app` tự xử lý) |
+| Code mock có body `<Error: Too many levels of nesting…>` | Dùng `source.collection` thay vì `source.spec` trong định nghĩa |
+| `cloud-push` báo chưa đăng nhập | Chạy `postman login --with-api-key <key>` trong terminal |
+| `A scenario with this name already exists` | Mock được tạo bằng `postman mock generate -w` không push đè được → để `mock-app` tạo mock mới bằng `cloud-push` |

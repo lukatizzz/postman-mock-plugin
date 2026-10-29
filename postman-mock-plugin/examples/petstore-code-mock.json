@@ -1,0 +1,14 @@
+{
+  "name": "Petstore code mock",
+  "workspace": "<workspaceId>",
+  "mockId": null,
+  "source": { "spec": "./petstore.yaml" },
+  "stateful": false,
+  "scenarios": {
+    "pet-sold": [
+      { "method": "GET", "path": "/v1/pets/:petId", "status": 200, "body": { "id": 7, "name": "Luna", "status": "sold" } },
+      { "method": "POST", "path": "/v1/auth/login", "status": 401, "delayMs": 800,
+        "body": { "code": "ACCOUNT_LOCKED", "message": "Account is locked" } }
+    ]
+  }
+}
