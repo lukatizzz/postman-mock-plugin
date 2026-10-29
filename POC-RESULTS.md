@@ -92,6 +92,38 @@ Phát hiện thêm từ spec thật:
   - Push **không xoá** scenario đã bỏ → `retiredScenarios` đưa scenario về hành vi default; xoá hẳn trong app.
   - Nguồn spec giữ server path trong route (`/v1/pets`), nguồn collection thì mất → `basePath` chỉ áp cho nguồn collection.
 
+## Dashboard + gateway Mock/Real (`scripts/dashboard.mjs`)
+
+- **Sandbox mock của Postman chặn mạng ra ngoài**: trong code mock, `http.request`, `https.request`, `fetch` đều lỗi `[mock-sandbox] outbound network is blocked` → chế độ "API thật" phải đặt ở gateway trên máy, không thể nằm trong JS trên cloud.
+- Kiểm thử với JumpApp (96 API) + API thật giả lập:
+  - Mock: gateway tự chạy `postman mock run <mockId>` ở lần gọi đầu (~5 s), sau đó vài ms.
+  - Real: chuyển đúng path, query, `Authorization`; bỏ `x-mock-*`; các API khác vẫn Mock.
+  - Scenario chọn trên dashboard → client không cần header vẫn nhận 404 của `qa-edge-cases`.
+  - Sửa dữ liệu default → Push → mock tự khởi động lại → dữ liệu mới có hiệu lực; scenario kế thừa dữ liệu default đã sửa.
+  - Trong lúc push dashboard vẫn phản hồi (17 lần poll, tối đa 12 ms) sau khi đổi `postman` CLI sang chạy bất đồng bộ.
+  - Ctrl+C dừng đúng runner của dashboard; app Postman desktop vẫn chạy. POST thiếu header `x-dashboard` → 403.
+- Dữ liệu thử đã được gỡ và push lại; mock JumpApp trên cloud trở về như trước.
+
+## Mock Hub v0.3: flow, case có điều kiện, Real gọi thẳng, MCP dùng chung
+
+- Mô hình dữ liệu v2 (`mock-store.mjs`): API × flow → `cases` (điều kiện params / query / headers / body) → `response` → default → example; `enabled` theo flow; định nghĩa v1 tự chuyển đổi.
+- Sinh code (`app-mock.mjs`): mỗi flow một file JS, chuỗi ưu tiên compile thành `if` theo thứ tự; Petstore **14/14** (params, header, query, body + delay, flow response, flow tắt → default, `x-mock-response-code`).
+- Hub local (JumpApp 96 API) **18/18**: chuyển v1 → v2, API Real → 307 + `__routes` + `__client.js`, case params/header, flow tắt → chuỗi default, validation, push và kiểm tra trên gateway.
+- Hub dùng chung + MCP (streamable HTTP, JSON) **20/20**: 401 khi thiếu token, token giới hạn project → 403, đủ các tool, `push_mock` chờ xong, dữ liệu tạo qua MCP có hiệu lực trên gateway.
+- Phát hiện: redirect 307 sang server khác origin làm mất header `Authorization` → client nên gọi thẳng theo bảng route.
+- Dữ liệu thử đã gỡ; mock JumpApp về như trước (flow `empty-state` thử nghiệm trên cloud đã về dữ liệu default, có thể xoá trong app).
+- Chưa thử: kết nối hub MCP từ Claude Code / Codex thật (đã kiểm bằng client JSON-RPC theo chuẩn MCP); chạy hub trên máy chủ khác qua HTTPS.
+
+## Đồng bộ khi file OpenAPI thay đổi (`spec-sync.mjs`)
+
+Thử trên collection Petstore với spec v1.1 (đổi `{petId}` → `{id}`, thêm `GET /pets/{id}/photos`, bỏ `/auth/login`, thêm field `age`) – **24/24**:
+- Xem trước (dry run) báo đúng API mới / bị xoá / đổi tên / scenario bị bỏ và **không** đổi collection.
+- Đồng bộ: cùng collection UID; ID request giữ nguyên (cả API đổi tên param); scenario `missing-999`, `pet-sold`, `gone-777` theo sang `GET /pets/:id`; `/auth/login` bị bỏ; `specHash` cập nhật.
+- Hub: dữ liệu mồ côi `GET /pets/:petId` gợi ý `GET /pets/:id`; chuyển → điều kiện `petId=999` thành `id=999`; cảnh báo schema `GET /pets` thiếu `age`.
+- Push: case chuyển sang chạy đúng (404), example mới có `age`, API mới chạy, API bị xoá → 404; mock cổ điển Postman vẫn trả scenario đã giữ.
+- Collection tạm dùng để import đã được xoá (workspace chỉ còn 2 collection).
+- Ghi chú: collection "Petstore PoC" giờ ở spec v1.1 (dữ liệu thử nghiệm).
+
 ## Chưa kiểm chứng trong PoC
 - Gọi qua **Postman MCP server** (session này chưa nạp MCP; PoC dùng REST endpoint tương đương). Cần cài plugin vào Claude Code và chạy lại luồng bằng skill.
 - Tool MCP `createCollectionResponse` có nhận định dạng v1 không (nếu không → skill luôn dùng script).

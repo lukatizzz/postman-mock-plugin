@@ -10,13 +10,14 @@
 
 import fs from 'node:fs';
 
-const URL_ = process.env.POSTMAN_MCP_URL ?? 'https://mcp.postman.com/mcp';
+// MCP_URL / MCP_TOKEN point it at another MCP server (e.g. the mock hub); defaults to Postman's.
+const URL_ = process.env.MCP_URL ?? process.env.POSTMAN_MCP_URL ?? 'https://mcp.postman.com/mcp';
 let sessionId;
 let nextId = 1;
 
 async function rpc(method, params, notify = false) {
-  const key = process.env.POSTMAN_API_KEY;
-  if (!key) throw new Error('POSTMAN_API_KEY is not set');
+  const key = process.env.MCP_TOKEN ?? process.env.POSTMAN_API_KEY;
+  if (!key) throw new Error('POSTMAN_API_KEY (or MCP_TOKEN) is not set');
   const headers = {
     Authorization: `Bearer ${key}`,
     'Content-Type': 'application/json',

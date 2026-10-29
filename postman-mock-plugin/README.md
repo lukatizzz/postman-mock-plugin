@@ -36,6 +36,7 @@ bearer_token_env_var = "POSTMAN_API_KEY"
 | mock-reset | `/postman-mock:mock-reset` | `$mock-reset` | Xoá scenario / tắt lỗi toàn cục |
 | mock-local | `/postman-mock:mock-local` | `$mock-local` | Chạy mock local (không tốn quota) |
 | mock-app | `/postman-mock:mock-app` | `$mock-app` | Code mock JavaScript lưu trên cloud (Mocks của Postman), scenario qua `x-mock-scenario`, tuỳ chọn stateful |
+| mock-dashboard | `/postman-mock:mock-dashboard` | `$mock-dashboard` | Mock Hub: dashboard (flow, case có điều kiện, bật/tắt theo flow, Mock/Real), MCP cho team, gateway + bảng route |
 
 Cũng có thể nói tự nhiên: *"tạo mock từ api/openapi.yaml"*, *"cho API login trả 401 khi password là wrong"*.
 

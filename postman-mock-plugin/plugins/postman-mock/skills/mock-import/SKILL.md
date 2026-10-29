@@ -15,7 +15,7 @@ Free plan budget: a full import of a small spec costs ~5 Postman API calls plus 
 - Read the file. Confirm OpenAPI 2.0 / 3.0 / 3.1 and < 12 MB.
 - Inventory each operation: method, path, documented status codes, the example (or schema) per response.
 - Note the **base path** of `servers[0].url` (e.g. `/v1` in `https://api.example.com/v1`). The mock serves paths *under* it: `<mockUrl>/v1/pets`.
-- Compute `sha256` of the file. If state already has a collection for this spec, ask: sync or new.
+- Compute `sha256` of the file. If state already has a collection for this spec, do NOT import again: run the spec sync (`node <scripts>/spec-sync.mjs <projectRoot> --dry-run`, then without `--dry-run` after the user agrees; or the hub's "Đồng bộ từ spec" / MCP `sync_from_spec`). It updates the existing collection in place and keeps ids and scenario examples. Only create a new collection if the user explicitly wants a separate one.
 
 ## 2. Create the collection
 Use the Postman MCP tools if available, otherwise the script (same endpoints):

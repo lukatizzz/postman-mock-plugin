@@ -1,14 +1,35 @@
 {
+  "version": 2,
   "name": "Petstore code mock",
   "workspace": "<workspaceId>",
   "mockId": null,
   "source": { "spec": "./petstore.yaml" },
   "stateful": false,
-  "scenarios": {
-    "pet-sold": [
-      { "method": "GET", "path": "/v1/pets/:petId", "status": 200, "body": { "id": 7, "name": "Luna", "status": "sold" } },
-      { "method": "POST", "path": "/v1/auth/login", "status": 401, "delayMs": 800,
-        "body": { "code": "ACCOUNT_LOCKED", "message": "Account is locked" } }
-    ]
+  "realBaseUrl": "",
+  "defaultMode": "mock",
+  "activeFlow": "default",
+  "flows": ["sold-out"],
+  "apis": {
+    "GET /v1/pets/:petId": {
+      "flows": {
+        "default": {
+          "cases": [
+            { "name": "not found", "when": { "params": { "petId": "999" } }, "response": { "status": 404, "body": { "code": "PET_NOT_FOUND" } } },
+            { "name": "admin view", "when": { "headers": { "x-role": "admin" } }, "response": { "status": 200, "body": { "id": 1, "name": "Milo", "notes": "vet only" } } }
+          ]
+        },
+        "sold-out": { "response": { "status": 200, "body": { "id": 7, "name": "Luna", "status": "sold" } } }
+      }
+    },
+    "POST /v1/auth/login": {
+      "flows": {
+        "default": {
+          "cases": [
+            { "name": "locked", "when": { "body": { "email": "locked@example.com" } }, "response": { "status": 423, "delayMs": 300, "body": { "code": "ACCOUNT_LOCKED" } } }
+          ]
+        },
+        "sold-out": { "enabled": false }
+      }
+    }
   }
 }
