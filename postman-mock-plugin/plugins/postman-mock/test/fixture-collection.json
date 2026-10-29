@@ -1,0 +1,115 @@
+{
+  "collection": {
+    "info": { "name": "Petstore PoC", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+    "variable": [{ "key": "baseUrl", "value": "https://api.example.com/v1" }],
+    "item": [
+      {
+        "name": "pets",
+        "item": [
+          {
+            "name": "List pets",
+            "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets", "host": ["{{baseUrl}}"], "path": ["pets"] } },
+            "response": [
+              {
+                "id": "ex-list-200", "name": "200 OK", "code": 200, "status": "OK",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets", "host": ["{{baseUrl}}"], "path": ["pets"] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "[{\"id\":1,\"name\":\"Milo\",\"status\":\"available\"},{\"id\":2,\"name\":\"Luna\",\"status\":\"sold\"}]"
+              },
+              {
+                "id": "ex-list-sold", "name": "GET /pets :: only-sold", "code": 200, "status": "OK",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets?status=sold", "host": ["{{baseUrl}}"], "path": ["pets"], "query": [{ "key": "status", "value": "sold" }] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "[{\"id\":2,\"name\":\"Luna\",\"status\":\"sold\"}]"
+              }
+            ]
+          },
+          {
+            "name": "Get a pet by id",
+            "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets/:petId", "host": ["{{baseUrl}}"], "path": ["pets", ":petId"] } },
+            "response": [
+              {
+                "id": "ex-get-200", "name": "200 OK", "code": 200, "status": "OK",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets/:petId", "host": ["{{baseUrl}}"], "path": ["pets", ":petId"] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"id\":1,\"name\":\"Milo\",\"status\":\"available\"}"
+              },
+              {
+                "id": "ex-get-404", "name": "404 Not Found", "code": 404, "status": "Not Found",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets/{{petId}}", "host": ["{{baseUrl}}"], "path": ["pets", "{{petId}}"] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"code\":\"NOT_FOUND\",\"message\":\"Pet not found\"}"
+              },
+              {
+                "id": "ex-get-999", "name": "GET /pets/{petId} :: missing-999", "code": 404, "status": "Not Found",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets/999", "host": ["{{baseUrl}}"], "path": ["pets", "999"] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"code\":\"PET_NOT_FOUND\",\"message\":\"Pet 999 does not exist\"}"
+              },
+              {
+                "id": "ex-get-sold", "name": "GET /pets/{petId} :: pet-sold", "code": 200, "status": "OK",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets/:petId", "host": ["{{baseUrl}}"], "path": ["pets", ":petId"] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"id\":{{$pathSegments '2'}},\"name\":\"Luna\",\"status\":\"sold\"}"
+              },
+              {
+                "id": "ex-get-42", "name": "GET /pets/{petId} :: pet-42", "code": 200, "status": "OK",
+                "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/pets/:petId", "host": ["{{baseUrl}}"], "path": ["pets", ":petId"], "variable": [{ "key": "petId", "value": "42" }] } },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"id\":42,\"name\":\"Rex\",\"status\":\"available\"}"
+              }
+            ]
+          },
+          {
+            "name": "Create a pet",
+            "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/pets", "host": ["{{baseUrl}}"], "path": ["pets"] } },
+            "response": [
+              {
+                "id": "ex-create-201", "name": "201 Created", "code": 201, "status": "Created",
+                "originalRequest": {
+                  "method": "POST",
+                  "header": [{ "key": "Content-Type", "value": "application/json" }],
+                  "body": { "mode": "raw", "raw": "{\"name\":\"Milo\",\"status\":\"available\"}" },
+                  "url": { "raw": "{{baseUrl}}/pets", "host": ["{{baseUrl}}"], "path": ["pets"] }
+                },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"id\":\"{{$randomUUID}}\",\"name\":\"{{$body 'name' 'Unknown'}}\",\"status\":\"available\"}"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "auth",
+        "item": [
+          {
+            "name": "Log in",
+            "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] } },
+            "response": [
+              {
+                "id": "ex-login-200", "name": "200 OK", "code": 200, "status": "OK",
+                "originalRequest": {
+                  "method": "POST",
+                  "body": { "mode": "raw", "raw": "{\"email\":\"user@example.com\",\"password\":\"secret\"}" },
+                  "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+                },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"token\":\"eyJhbGciOi.example\",\"expiresIn\":3600}"
+              },
+              {
+                "id": "ex-login-401", "name": "POST /auth/login :: wrong-password", "code": 401, "status": "Unauthorized",
+                "originalRequest": {
+                  "method": "POST",
+                  "body": { "mode": "raw", "raw": "{\"email\":\"user@example.com\",\"password\":\"wrong\"}" },
+                  "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+                },
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": "{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Email or password is incorrect\"}"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "postman-mock",
+  "displayName": "Postman Mock",
+  "version": "0.1.0",
+  "description": "Turn an OpenAPI YAML into a Postman collection, examples and mock server, then set mock responses for specific cases in plain language.",
+  "author": { "name": "zyyx" },
+  "license": "MIT",
+  "keywords": ["postman", "mock", "openapi", "mcp"]
+}

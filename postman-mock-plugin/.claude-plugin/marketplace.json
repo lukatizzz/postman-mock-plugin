@@ -1,0 +1,11 @@
+{
+  "name": "postman-mock-tools",
+  "owner": { "name": "zyyx" },
+  "plugins": [
+    {
+      "name": "postman-mock",
+      "source": "./plugins/postman-mock",
+      "description": "Create Postman mock servers from OpenAPI specs and set per-case mock responses."
+    }
+  ]
+}

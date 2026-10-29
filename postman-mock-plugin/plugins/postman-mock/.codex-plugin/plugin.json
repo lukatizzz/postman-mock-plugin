@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "postman-mock",
+  "version": "0.1.0",
+  "description": "Turn an OpenAPI YAML into a Postman collection, examples and mock server, then set mock responses for specific cases in plain language.",
+  "extensions": {
+    "com.openai": {
+      "interface": { "displayName": "Postman Mock", "category": "Developer Tools" }
+    }
+  }
+}

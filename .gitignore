@@ -1,0 +1,10 @@
+# Per-user mock state (IDs of your own Postman workspace/mock)
+.postman-mock/
+
+# Collections exported from real / PoC specs (may contain internal API data)
+jumpapp/
+poc/
+
+node_modules/
+.env
+*.log

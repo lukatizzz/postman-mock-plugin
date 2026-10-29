@@ -1,0 +1,11 @@
+{
+  "name": "postman-mock-tools",
+  "owner": { "name": "zyyx" },
+  "plugins": [
+    {
+      "name": "postman-mock",
+      "source": { "source": "local", "path": "./plugins/postman-mock" },
+      "policy": { "installation": "AVAILABLE" }
+    }
+  ]
+}
