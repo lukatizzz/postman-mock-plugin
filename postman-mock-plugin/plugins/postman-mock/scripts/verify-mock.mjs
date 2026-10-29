@@ -2,7 +2,7 @@
 // Calls every request of an exported collection on a mock and checks that each one
 // returns its own default (lowest 2xx) example. No dependencies; Node 18+.
 //
-// Usage: node verify-mock.mjs <collection.json> <mockBaseUrl> [--only <substring>] [--concurrency 4]
+// Usage: node verify-mock.mjs <collection.json> <mockBaseUrl> [--only <substring>] [--concurrency 4] [--base-path /api/v1]
 // Sends x-api-key from POSTMAN_API_KEY when the URL is a Postman mock (*.pstmn.io).
 
 import fs from 'node:fs';
@@ -37,7 +37,7 @@ const walk = items => {
 };
 walk(collection.item);
 
-const basePath = String(variables.baseUrl ?? '').replace(/^[a-z]+:\/\/[^/]+/i, '').replace(/\/$/, '');
+const basePath = opt('base-path') ?? String(variables.baseUrl ?? '').replace(/^[a-z]+:\/\/[^/]+/i, '').replace(/\/$/, '');
 const root = baseUrl.replace(/\/$/, '') + (baseUrl.includes(basePath) ? '' : basePath);
 const headers = { 'content-type': 'application/json' };
 if (/pstmn\.io/.test(baseUrl) && process.env.POSTMAN_API_KEY) headers['x-api-key'] = process.env.POSTMAN_API_KEY;

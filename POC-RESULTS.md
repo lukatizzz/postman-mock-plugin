@@ -66,6 +66,20 @@ Phát hiện thêm từ spec thật:
 - **Cách E qua MCP**: `createMockServerResponse` 503 + `updateMock(config.serverResponseId)` → mọi API trả 503 kèm `Retry-After`; set `null` → trở lại bình thường. ✅
 - ⚠️ **`updateMock` không gửi `private: true` → mock bị chuyển sang PUBLIC** (đã khôi phục). Skill & script `mock-config` đã sửa để luôn gửi lại `private`.
 
+## Mock local của app Postman (JavaScript, `postman/mocks/`) – Postman CLI 1.82.0
+
+- Cài `npm install -g postman-cli` (package do Postman phát hành). `postman mock generate` / `postman mock run` **không cần đăng nhập**.
+- `postman mock generate <spec|collection> --output postman/mocks/<name>` sinh `config.yaml` (port, danh sách scenario, `default: true`) + `default.js` (`http.createServer`, `// @endpoint`, `x-mock-response-code`). `--stateful` sinh CRUD dùng `pm.state`.
+- Petstore: static ✅, stateful (POST → GET thấy → DELETE → 404) ✅, scenario qua header `x-mock-scenario` ✅, delay trong scenario ✅.
+- JumpApp:
+  - Sinh **từ spec**: 95 endpoint, đúng route/status nhưng **363 chỗ body là `<Error: Too many levels of nesting...>`** (schema lồng sâu).
+  - Sinh **từ collection** (đã chuẩn hoá trên Postman): 96 endpoint, 0 lỗi body, nhưng **mất base path `/api/v1`** → `app-mock.mjs set-base-path` → **96/96** endpoint trả đúng example (cả có và không có `/api/v1`).
+  - Scenario `qa-edge-cases` (404 cho `/constructions/99999999`, list rỗng cho `searchWord=none`) ✅; không có header → default.
+- Stateful lưu id theo tên path variable (`petId`) → `app-mock.mjs rename-id-field petId id`.
+- `x-mock-scenario` không tồn tại → âm thầm trả default.
+- ⚠️ Khi dừng mock: chỉ dừng tiến trình `postman ... mock run` của mình; **không** kill mọi `postman.exe` (sẽ tắt app desktop).
+- Chưa kiểm chứng: bấm Start mock trong **app desktop** (Local View + Native Git) – cần bạn mở app thử.
+
 ## Chưa kiểm chứng trong PoC
 - Gọi qua **Postman MCP server** (session này chưa nạp MCP; PoC dùng REST endpoint tương đương). Cần cài plugin vào Claude Code và chạy lại luồng bằng skill.
 - Tool MCP `createCollectionResponse` có nhận định dạng v1 không (nếu không → skill luôn dùng script).
