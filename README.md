@@ -111,7 +111,7 @@ Mở http://localhost:4800/ (hoặc nói với Claude *"mở mock hub"* – `/po
 - Mỗi **API × flow** có: danh sách **case có điều kiện** (khớp case nào trước thì trả case đó), **dữ liệu chung** (khi không case nào khớp), và công tắc **Bật**.
   Thứ tự: case của flow → dữ liệu chung của flow → case default → dữ liệu default → example gốc (2xx thấp nhất). **Tắt** API trong một flow → API trả dữ liệu default.
 - **Điều kiện** (`when`, tất cả phải khớp, `*` = có giá trị bất kỳ): path param (`constructionNo = 99999999`), query (`searchWord = none`), header (`authorization = Bearer expired`), field trong body (`user.email = a@b.c`).
-- **Chế độ** từng API: **Mock** hoặc **Real** – API Real được client **gọi thẳng server thật** (`Real API base URL`) theo bảng route.
+- **Chế độ** từng API: **Mock** hoặc **Real** – API Real được hub **chuyển tiếp sang server thật** (`Real API base URL`, giữ nguyên method, header kể cả `Authorization`, body), nên app chỉ cần một base URL là hub. App cũng có thể gọi thẳng server thật theo bảng route.
 
 | Phần | Làm gì |
 |---|---|
@@ -136,12 +136,13 @@ Header khi gọi mock:
 
 Giá trị động trong body: `{{$randomUUID}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`, `{{$randomFullName}}`, `{{$body 'email'}}`, `{{$queryParams 'k'}}`, `{{$headers 'k'}}`, `{{$pathParams 'id'}}`.
 
-Dùng bảng route trong app client (dev):
+Gọi API Real qua hub: hub gửi request sang server thật rồi trả nguyên response (header `x-gateway-mode: real`). Không dùng redirect, vì client (trình duyệt, Dart `HttpClient`) bỏ header `Authorization` khi redirect sang origin khác, và `HttpClient` không đi theo 307 với POST / PUT.
+
+Muốn app gọi thẳng server thật cho API Real (không qua hub), dùng bảng route (dev):
 ```js
 const { urlFor } = await import('http://localhost:4800/gw/demo/jumpapp/__client.js');
 const res = await fetch(urlFor('GET', '/tasks?page=1'));   // API Real → server thật, API Mock → hub
 ```
-Nếu client vẫn gọi API Real qua hub, hub trả **307** sang server thật (trình duyệt bỏ header `Authorization` khi redirect khác origin → nên dùng bảng route).
 
 **Hub dùng chung cho team + MCP**
 1. Trên máy chủ nội bộ (Node 18+, có `POSTMAN_API_KEY`): copy [examples/hub.example.json](postman-mock-plugin/examples/hub.example.json) thành `hub.json`, khai báo `projects`, `publicUrl`.

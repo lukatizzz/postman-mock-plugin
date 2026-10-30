@@ -18,7 +18,7 @@ Needs a collection from **mock-import** (`state.json` `collectionUid`). No Postm
 - **Conditions** (`when`, all must match, `"*"` = present with any value): `params` (path params by name), `query`, `headers` (case-insensitive), `body` (dotted JSON paths).
 - Request headers: `x-mock-scenario`, `x-mock-response-code: 404` (that example of the collection, bypassing mock data), `x-mock-response-name: <example name>`, `x-mock-response-delay: <ms>`. Response header `x-mock-source` says what answered.
 - Dynamic values in bodies: `{{$randomUUID}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`, `{{$randomFullName}}`, `{{$body 'a.b' 'default'}}`, `{{$queryParams 'k'}}`, `{{$headers 'k'}}`, `{{$pathParams 'id'}}`.
-- **Mode** per API: `mock` or `real`. Real APIs are called **directly** by the client at `realBaseUrl` using `GET /gw/<project>/<mock>/__routes` or the ES module `/__client.js` (`urlFor(method, path)`). A real-mode request that still reaches the hub gets `307` to the real URL (browsers drop `Authorization` on that cross-origin redirect - use the routing table).
+- **Mode** per API: `mock` or `real`. The gateway forwards a real-mode request to `realBaseUrl` (method, headers including `Authorization`, body) and returns the real response with `x-gateway-mode: real`, so a client can use the gateway as its only base URL. Clients may also call the real API directly with `GET /gw/<project>/<mock>/__routes` or the ES module `/__client.js` (`urlFor(method, path)`).
 - **realBaseUrl is saved per project** in `state.json` and reused by every mock (also new ones); a mock may override it (`realScope: "mock"`). Do not ask again if `list_projects` already shows one.
 
 ## Run it

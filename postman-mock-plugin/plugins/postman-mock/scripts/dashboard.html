@@ -614,7 +614,6 @@ $('#tSend').onclick = async () => {
     const url = `/gw/${encodeURIComponent(d.project)}/${encodeURIComponent(d.mock)}${d.basePath || ''}${$('#tPath').value.trim()}`;
     $('#tOut').textContent = `${api.method} ${url} …`;
     const res = await fetch(url, { method: api.method, headers, body: hasBody ? $('#tBody').value : undefined, redirect: 'manual' });
-    if (res.type === 'opaqueredirect' || res.status === 307) { $('#tOut').textContent = 'API đang ở chế độ Real → client gọi thẳng ' + (d.realBaseUrl || '(chưa đặt Real API base URL)'); return; }
     const src = decodeURIComponent(res.headers.get('x-mock-source') || '');
     $('#tOut').textContent = `${res.status} · ${src ? 'trả từ ' + src : 'mode=' + (res.headers.get('x-gateway-mode') || '?')}\n\n${pretty(await res.text())}`;
   } catch (e) { $('#tOut').textContent = 'Lỗi: ' + e.message; }

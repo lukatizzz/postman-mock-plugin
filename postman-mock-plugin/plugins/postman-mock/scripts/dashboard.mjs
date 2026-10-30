@@ -17,9 +17,9 @@
 //
 //   /                          dashboard (edit mock data per API / flow / case, enable per flow, Mock/Real)
 //   /mcp                       MCP endpoint (streamable HTTP, JSON responses) - tools to create mock data
-//   /gw/<project>/<mock>/...   mock server for client apps; APIs switched to "real" are answered with
-//                              307 to realBaseUrl - clients should call those directly, using
-//                              /gw/<project>/<mock>/__routes (JSON) or /__client.js (urlFor()).
+//   /gw/<project>/<mock>/...   mock server for client apps; APIs switched to "real" are forwarded to
+//                              realBaseUrl (headers and body as sent). Clients may also call those directly,
+//                              using /gw/<project>/<mock>/__routes (JSON) or /__client.js (urlFor()).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -309,6 +309,31 @@ function cors(req) {
   };
 }
 
+// Hop-by-hop headers, plus the ones fetch() recomputes (host, length; it also decompresses the body).
+const NOT_FORWARDED = new Set(['connection', 'keep-alive', 'proxy-connection', 'proxy-authorization', 'te', 'trailer',
+  'transfer-encoding', 'upgrade', 'host', 'content-length', 'content-encoding']);
+
+// Forwards a real-mode request to the real API and returns its response as is. A 307 instead would make
+// clients drop Authorization on the cross-origin hop (browsers, Dart HttpClient), and HttpClient does not
+// follow a 307 for POST / PUT at all.
+async function proxyReal(req, res, url) {
+  const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !NOT_FORWARDED.has(k)));
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  let upstream;
+  try {
+    upstream = await fetch(url, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined, redirect: 'manual' });
+  } catch (e) {
+    return sendJson(res, 502, { error: 'realUnreachable', message: `${req.method} ${url}: ${e.cause?.message ?? e.message}` }, cors(req));
+  }
+  const out = {};
+  upstream.headers.forEach((v, k) => { if (!NOT_FORWARDED.has(k) && k !== 'set-cookie') out[k] = v; });
+  const cookies = upstream.headers.getSetCookie();
+  if (cookies.length) out['set-cookie'] = cookies;
+  res.writeHead(upstream.status, { ...out, ...cors(req), 'x-gateway-mode': 'real' });
+  res.end(Buffer.from(await upstream.arrayBuffer()));
+}
+
 async function gateway(req, res, projName, mock, rest, search) {
   if (req.method === 'OPTIONS') { res.writeHead(204, cors(req)); return res.end(); }
   const proj = project(projName);
@@ -325,9 +350,7 @@ async function gateway(req, res, projName, mock, rest, search) {
   const mode = ep ? modeOf(def, ep.key) : (def.defaultMode ?? 'mock');
   if (mode === 'real') {
     if (!real) return sendJson(res, 502, { error: 'realBaseUrlMissing', message: 'This API is in Real mode but neither the project nor the mock has a realBaseUrl' }, cors(req));
-    // Real APIs are called directly by the client; a request that still reaches the gateway is redirected there.
-    res.writeHead(307, { location: real + inner + search, 'x-gateway-mode': 'real', ...cors(req) });
-    return res.end();
+    return proxyReal(req, res, real + inner + search);
   }
   let bodyText = '';
   for await (const c of req) bodyText += c;
@@ -446,7 +469,7 @@ const TOOLS = [
   { name: 'set_api_enabled', description: 'Enable or disable the mock data of an API in a flow. Disabled: the API answers with the default flow data in that flow (default flow disabled: the collection example).',
     inputSchema: { type: 'object', properties: { ...apiArg, ...flowArg, enabled: { type: 'boolean' } }, required: ['project', 'mock', 'api', 'enabled'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, (def, eps) => ops.setEnabled(def, checkApi(eps, a.api), a.flow ?? 'default', a.enabled))) },
-  { name: 'set_api_mode', description: 'Use the mock or the real deployed API for an API ("real": clients call realBaseUrl directly). api="*" sets every API.',
+  { name: 'set_api_mode', description: 'Use the mock or the real deployed API for an API ("real": the gateway forwards the request to realBaseUrl). api="*" sets every API.',
     inputSchema: { type: 'object', properties: { ...mockArg, api: { ...S, description: 'API key or "*"' }, mode: { type: 'string', enum: ['mock', 'real', 'inherit'] } }, required: ['project', 'mock', 'api', 'mode'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, (def, eps) => (a.api === '*' ? ops.setAllModes(def, a.mode) : ops.setMode(def, checkApi(eps, a.api).key, a.mode)))) },
   { name: 'set_mock_settings', description: 'Set realBaseUrl (real environment; saved for the whole project unless realScope="mock"), defaultMode and activeFlow (flow served when the client sends no x-mock-scenario header).',
@@ -499,8 +522,8 @@ const TOOLS = [
 const MCP_INSTRUCTIONS = 'Mock hub: mock servers built on Postman collections; every change applies immediately. Typical flow: list_projects -> ' +
   'list_mocks -> list_apis -> get_api (see examples) -> set_api_response / upsert_case (conditions on path params, query, headers, body) -> ' +
   'try_request to verify. Flows are scenarios selected with header x-mock-scenario; set_api_enabled turns an API\'s data on/off per flow ' +
-  '(off = default data). set_api_mode switches an API between the mock and the real deployed API (realBaseUrl, saved per project), which ' +
-  'clients then call directly (get_routes). When the OpenAPI file changed (list_mocks shows spec.changed): sync_from_spec (dryRun first) -> ' +
+  '(off = default data). set_api_mode switches an API between the mock and the real deployed API (realBaseUrl, saved per project): the ' +
+  'gateway forwards real-mode requests there (or clients call it directly, get_routes). When the OpenAPI file changed (list_mocks shows spec.changed): sync_from_spec (dryRun first) -> ' +
   'resolve_orphan for each orphan -> fix schemaWarnings.';
 
 async function mcp(req, res) {
