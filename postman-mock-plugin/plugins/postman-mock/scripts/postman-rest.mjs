@@ -209,13 +209,14 @@ const commands = {
 
   async 'export-collection'([collectionId], opts) {
     if (!collectionId) fail('usage: export-collection <collectionId> [--out <file>]');
-    const data = await api('GET', `/collections/${encodeURIComponent(collectionId)}`);
+    const { collection } = await api('GET', `/collections/${encodeURIComponent(collectionId)}`);
     const out = opts.out ?? '.postman-mock/collection.json';
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.writeFileSync(out, JSON.stringify(data, null, 2));
+    // Same shape as the hub's cache (.postman-mock/collections/<uid>.json): the collection itself, not { collection }.
+    fs.writeFileSync(out, JSON.stringify(collection, null, 2));
     let count = 0;
     const walk = items => (items ?? []).forEach(i => { count += (i.response ?? []).length; walk(i.item); });
-    walk(data.collection?.item);
+    walk(collection.item);
     print({ out, examples: count });
   },
 
