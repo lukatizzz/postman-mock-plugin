@@ -30,7 +30,7 @@ import { syncFromSpec, orphansOf, schemaWarnings, resolveOrphan, fileHash, colle
 import { respond } from './mock-engine.mjs';
 import { ensureV2, migrateLegacy, ops, routes, clientModule, modeOf, allFlows, findApi, checkApi, StoreError } from './mock-store.mjs';
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const args = process.argv.slice(2);
 const opt = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : fallback; };
 const HTML = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard.html');

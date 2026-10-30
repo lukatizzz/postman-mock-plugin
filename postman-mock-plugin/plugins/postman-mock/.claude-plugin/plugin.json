@@ -1,7 +1,7 @@
 {
   "name": "postman-mock",
   "displayName": "Postman Mock",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Turn an OpenAPI YAML into a Postman spec and collection, keep it in sync when the spec changes, and run a Mock Hub on it: conditional mock data per flow, Mock/Real per API, dashboard and MCP for the team.",
   "author": {
     "name": "zyyx"
