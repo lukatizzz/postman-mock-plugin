@@ -1,36 +1,24 @@
-# `.postman-mock/state.json`
+# `.postman-mock/` in a project
 
-Single source of IDs for every mock skill. Read it first; update it after every change.
-Reading IDs from here instead of listing them again saves Postman API calls (free plan: 10,000/month).
+Per-user data and caches (git-ignored). Read `state.json` first instead of listing things again (saves Postman API calls).
 
-```json
-{
-  "workspaceId": "string",
-  "sourceSpec": "api/openapi.yaml",
-  "specHash": "sha256 of the spec file at import time",
-  "specId": "string or null (null when imported via import-openapi)",
-  "collectionId": "string",
-  "collectionUid": "ownerId-collectionId (needed by createMock)",
-  "mock": { "id": "string", "url": "https://<id>.mock.pstmn.io", "private": true, "serverResponseId": null },
-  "local": { "collectionFile": ".postman-mock/collection.json", "port": 4010 },
-  "endpoints": {
-    "GET /pets/{petId}": {
-      "requestId": "string",
-      "examples": { "200 OK": "responseId", "404 Not Found": "responseId" },
-      "scenarios": [
-        {
-          "name": "GET /pets/{petId} :: pet-sold",
-          "exampleId": "string",
-          "strategy": "path | name | body | default-edit",
-          "match": { "path": "/pets/999", "query": {}, "body": null },
-          "code": 200,
-          "note": "free text, e.g. ticket id",
-          "createdAt": "ISO date"
-        }
-      ]
-    }
-  }
-}
+```
+.postman-mock/
+├── state.json                     project settings + Postman ids
+├── collections/<collectionUid>.json   local copy of the collection the Mock Hub serves (offline-capable)
+└── code-mocks/<mock>.json         mock definitions (flows, cases, modes) - format: scripts/mock-store.mjs
 ```
 
-Endpoint keys use the OpenAPI path template (`{param}`), upper-case method, one space.
+`state.json`:
+```json
+{
+  "workspaceId": "Postman workspace id",
+  "sourceSpec": "path of the OpenAPI file (relative to the project when possible)",
+  "specHash": "sha256 of that file at the last import/sync - the hub shows 'spec changed' when it differs",
+  "specId": "Postman spec id (null when imported via import-openapi)",
+  "collectionUid": "ownerId-collectionId of the collection",
+  "lastSpecSyncAt": "ISO date of the last spec sync",
+  "realBaseUrl": "real environment base URL, reused by every mock of the project"
+}
+```
+Older files may contain more keys (`mock`, `endpoints`, ...) from earlier versions; keep them, they are ignored.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Re-sync a Postman collection (and the mocks built on it) after the OpenAPI file changed.
+// Re-sync a Postman collection (and the hub mocks built on it) after the OpenAPI file changed.
 // No dependencies; Node 18+. Needs POSTMAN_API_KEY.
 //
 //   node spec-sync.mjs <projectRoot> [--spec <file.yml>] [--collection <uid>] [--dry-run] [--force]
@@ -35,6 +35,8 @@ async function api(method, urlPath, body) {
 }
 
 export const fileHash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+// Local copy of a collection served by the mock hub (refreshed after each sync).
+export const collectionCachePath = (projectRoot, uid) => path.join(projectRoot, '.postman-mock', 'collections', `${uid}.json`);
 
 // ---------- collection helpers ----------
 
@@ -210,6 +212,15 @@ export async function syncFromSpec({ projectRoot, specFile, collectionUid, works
 
   log('Writing the merged collection (one PUT, ids kept)...');
   await api('PUT', `/collections/${encodeURIComponent(collectionUid)}`, { collection: merged });
+  // Refresh the hub's local copy from Postman (it now holds the ids Postman assigned to new items).
+  try {
+    const { collection: saved } = await api('GET', `/collections/${encodeURIComponent(collectionUid)}`);
+    const cache = collectionCachePath(projectRoot, collectionUid);
+    fs.mkdirSync(path.dirname(cache), { recursive: true });
+    fs.writeFileSync(cache, JSON.stringify(saved));
+  } catch (e) {
+    report.warnings.push(`Local collection cache not refreshed (${e.message.slice(0, 120)}); use ⟳ in the hub.`);
+  }
 
   if (specId) {
     try {

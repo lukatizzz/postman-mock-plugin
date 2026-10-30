@@ -1,9 +1,16 @@
 {
   "name": "postman-mock",
   "displayName": "Postman Mock",
-  "version": "0.1.0",
-  "description": "Turn an OpenAPI YAML into a Postman collection, examples and mock server, then set mock responses for specific cases in plain language.",
-  "author": { "name": "zyyx" },
+  "version": "0.4.0",
+  "description": "Turn an OpenAPI YAML into a Postman spec and collection, keep it in sync when the spec changes, and run a Mock Hub on it: conditional mock data per flow, Mock/Real per API, dashboard and MCP for the team.",
+  "author": {
+    "name": "zyyx"
+  },
   "license": "MIT",
-  "keywords": ["postman", "mock", "openapi", "mcp"]
+  "keywords": [
+    "postman",
+    "mock",
+    "openapi",
+    "mcp"
+  ]
 }

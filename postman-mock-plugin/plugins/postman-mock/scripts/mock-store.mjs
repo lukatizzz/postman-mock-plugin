@@ -1,17 +1,16 @@
-// Data model for Postman code mocks, shared by the hub (dashboard + MCP) and app-mock.mjs.
-// No dependencies; Node 18+.
+// Data model of the mock hub's mocks (mock data on top of a Postman collection), shared by the
+// dashboard, the MCP tools and mock-engine.mjs. No dependencies; Node 18+.
 //
 // Definition (version 2), one file per mock: <project>/.postman-mock/code-mocks/<mock>.json
 // {
 //   "version": 2,
-//   "name": "JumpApp code mock", "workspace": "<id>", "mockId": "<id>|null",
-//   "source": { "collection": "<uid>" } | { "spec": "<path>" },
-//   "basePath": "/api/v1", "stateful": false,
-//   "realBaseUrl": "https://dev.example.com/api/v1",   // clients call it DIRECTLY for APIs in "real" mode
+//   "name": "JumpApp mock", "workspace": "<postman workspace id>",
+//   "source": { "collection": "<collection uid>" },
+//   "basePath": "/api/v1",                             // base path of the API (requests may omit it)
+//   "realBaseUrl": "",                                 // optional per-mock override of the project's realBaseUrl
 //   "defaultMode": "mock",
 //   "activeFlow": "default",                           // flow the gateway serves when the client sends no header
 //   "flows": ["qa-edge-cases"],                        // flows (scenarios) besides "default"
-//   "retiredFlows": [],
 //   "apis": {
 //     "GET /constructions/:constructionNo": {
 //       "mode": "mock" | "real",                       // optional, else defaultMode
@@ -110,7 +109,6 @@ export function ensureV2(def) {
   def.version = 2;
   def.apis ??= {};
   def.flows = Object.keys(def.scenarios ?? {});
-  def.retiredFlows = def.retiredScenarios ?? [];
   def.activeFlow = def.activeScenario ?? 'default';
   def._legacy = { defaults: def.defaults ?? [], scenarios: def.scenarios ?? {}, endpoints: def.endpoints ?? {} };
   delete def.defaults; delete def.scenarios; delete def.retiredScenarios; delete def.activeScenario; delete def.endpoints;
@@ -233,13 +231,11 @@ export const ops = {
   addFlow(def, flow) {
     if (!FLOW_NAME.test(flow) || flow === 'default') bad('flow names: lower-case ASCII, digits and dashes (not "default")');
     if (!(def.flows ?? []).includes(flow)) def.flows = [...(def.flows ?? []), flow];
-    def.retiredFlows = (def.retiredFlows ?? []).filter(f => f !== flow);
   },
   removeFlow(def, flow) {
     if (flow === 'default') bad('the default flow cannot be removed');
     checkFlow(def, flow);
     def.flows = def.flows.filter(f => f !== flow);
-    def.retiredFlows = [...new Set([...(def.retiredFlows ?? []), flow])];
     for (const key of Object.keys(def.apis ?? {})) { delete def.apis[key].flows?.[flow]; prune(def, key); }
     if (def.activeFlow === flow) def.activeFlow = 'default';
   },
@@ -253,7 +249,6 @@ export const ops = {
       def.defaultMode = s.defaultMode;
     }
     if (s.activeFlow !== undefined) { checkFlow(def, s.activeFlow); def.activeFlow = s.activeFlow; }
-    if (s.runnerPort !== undefined) def.runnerPort = Number(s.runnerPort) || undefined;
   },
 };
 
@@ -295,13 +290,4 @@ export function baseUrlFor(method, path) {
 /** Full URL, e.g. urlFor('GET', '/tasks?page=2'). */
 export const urlFor = (method, path) => baseUrlFor(method, path) + path;
 `;
-}
-
-// Everything that ends up in the pushed code (not modes / gateway settings), to show "not pushed yet".
-export function definitionHash(def) {
-  const relevant = JSON.stringify([def.name, def.source, def.stateful, def.basePath, def.idField, def.flows, def.retiredFlows,
-    Object.fromEntries(Object.entries(def.apis ?? {}).map(([k, a]) => [k, a.flows ?? {}]))]);
-  let h = 0;
-  for (let i = 0; i < relevant.length; i++) h = (h * 31 + relevant.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(16);
 }

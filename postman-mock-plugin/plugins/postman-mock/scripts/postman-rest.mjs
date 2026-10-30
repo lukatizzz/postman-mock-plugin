@@ -4,17 +4,15 @@
 // Reads the API key from POSTMAN_API_KEY. Set POSTMAN_API_BASE_URL=https://api.eu.postman.com for the EU region.
 //
 // Commands:
-//   me                                         account + monthly usage (API calls, mock calls)
+//   me                                         account + monthly API usage
 //   import-openapi <file> [--workspace <id>]   OpenAPI file -> collection (synchronous)
 //   create-spec <file> --workspace <id> [--name <name>]
 //   generate-collection <specId> [--name <name>]   async; polls until the task finishes
-//   create-mock <collectionUid> --workspace <id> [--name <name>] [--public]
 //   upsert-example <example.json> --collection <uid> (--request <requestId> | --response <responseId>)
 //       example.json: { "name", "code", "body", "headers"?, "request": { "method", "url", "pathVariables"?, "body"? } }
 //   delete-example <responseId> --collection <uid>
-//   normalize-collection <collectionUid> [--dry-run] [--out <file>]   fix generated examples for predictable matching
+//   normalize-collection <collectionUid> [--dry-run] [--out <file>]   one clear default example per request
 //   export-collection <collectionId> [--out <file>]
-//   mock-config <mockId> [--match-body true|false] [--match-header true|false] [--delay <ms>|off]
 //   task-status <specId> <taskId>
 //   request <METHOD> <path> [--data <json>|@<file>]
 
@@ -166,18 +164,9 @@ const commands = {
     print({ id: responseId, action: 'deleted' });
   },
 
-  async 'create-mock'([collectionUid], opts) {
-    if (!collectionUid || !opts.workspace) fail('usage: create-mock <collectionUid> --workspace <id> [--name <name>] [--public]');
-    const { mock } = await api('POST', `/mocks?workspace=${encodeURIComponent(opts.workspace)}`, {
-      mock: { collection: collectionUid, name: opts.name ?? 'Mock', private: opts.public !== 'true' },
-    });
-    print({ id: mock.id, uid: mock.uid, mockUrl: mock.mockUrl, config: mock.config });
-  },
-
-  // Rewrites every example's request URL so the mock picks predictable answers, in ONE API call:
+  // Cleans the generated examples in ONE API call so every request has one clear default:
   //  - default example (lowest 2xx) of each request: {{baseUrl}}/path with {{var}} wildcards, no query
-  //  - every other example: same path + ?__example=<code>, so it only answers when asked for
-  //    (x-mock-response-code / x-mock-response-name) instead of winning ties against 201/204 defaults.
+  //  - every other example: same path + ?__example=<code> (selected with x-mock-response-code)
   // Examples whose name contains " :: " are user scenarios and are left untouched.
   async 'normalize-collection'([collectionUid], opts) {
     if (!collectionUid) fail('usage: normalize-collection <collectionUid> [--dry-run] [--out <file>]');
@@ -228,20 +217,6 @@ const commands = {
     const walk = items => (items ?? []).forEach(i => { count += (i.response ?? []).length; walk(i.item); });
     walk(data.collection?.item);
     print({ out, examples: count });
-  },
-
-  async 'mock-config'([mockId], opts) {
-    if (!mockId) fail('usage: mock-config <mockId> [--match-body true|false] [--match-header true|false] [--delay <ms>|off]');
-    const { mock } = await api('GET', `/mocks/${encodeURIComponent(mockId)}`);
-    const config = { ...(mock.config ?? {}) };
-    if (opts['match-body'] !== undefined) config.matchBody = opts['match-body'] === 'true';
-    if (opts['match-header'] !== undefined) config.matchHeader = opts['match-header'] === 'true';
-    if (opts.delay !== undefined) config.delay = opts.delay === 'off' ? null : { type: 'fixed', duration: Number(opts.delay) };
-    // PUT /mocks resets the mock to PUBLIC unless `private` is sent again (verified); GET exposes it as isPublic.
-    const data = await api('PUT', `/mocks/${encodeURIComponent(mockId)}`, {
-      mock: { name: mock.name, collection: mock.collection, environment: mock.environment, private: mock.isPublic === false, config },
-    });
-    print({ id: data.mock?.id, config: data.mock?.config });
   },
 
   async 'task-status'([specId, taskId]) {

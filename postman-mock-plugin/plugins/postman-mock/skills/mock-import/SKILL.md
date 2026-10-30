@@ -1,64 +1,49 @@
 ---
 name: mock-import
-description: Import an OpenAPI YAML/JSON file into Postman and build a mock - creates the spec, generates a collection, makes sure every API has a clean example for each documented status code, creates a (private) mock server and records everything in .postman-mock/state.json. Use when the user wants a Postman mock server, mock URL or mock examples from an OpenAPI file.
+description: Import an OpenAPI YAML/JSON file into Postman - creates the spec, generates a collection with a clean example for each documented status code, caches it locally and creates the Mock Hub mock for it. If the project already has a collection for the spec, syncs it instead of importing again. Use when the user wants a Postman collection or a mock from an OpenAPI file.
 ---
 
-# Import OpenAPI -> Postman collection, examples, mock server
+# Import OpenAPI -> Postman spec + collection (+ hub mock)
 
-Reply in the user's language. Helper scripts: `<this skill dir>/../../scripts/` (call as `node <scripts>/postman-rest.mjs ...`).
-State format: `../mock-setup/references/state.md`. If `.postman-mock/state.json` is missing or has no `workspaceId`, run the **mock-setup** steps first.
-Matching rules and pitfalls verified on real Postman: `../mock-set/references/postman-matching.md`.
-
-Free plan budget: a full import of a small spec costs ~5 Postman API calls plus 1 per example you fix. Answer from state instead of listing again.
+Reply in the user's language. Helper scripts: `<this skill dir>/../../scripts/` (`postman-rest.mjs`, `spec-sync.mjs`, `analyze-collection.mjs`).
+State format: `../mock-setup/references/state.md`. If `.postman-mock/state.json` has no `workspaceId`, run **mock-setup** first.
+Postman API budget (free plan 10,000/month): a full import costs ~5 calls plus 1 per example you fix.
 
 ## 1. Read the spec
 - Read the file. Confirm OpenAPI 2.0 / 3.0 / 3.1 and < 12 MB.
 - Inventory each operation: method, path, documented status codes, the example (or schema) per response.
-- Note the **base path** of `servers[0].url` (e.g. `/v1` in `https://api.example.com/v1`). The mock serves paths *under* it: `<mockUrl>/v1/pets`.
-- Compute `sha256` of the file. If state already has a collection for this spec, do NOT import again: run the spec sync (`node <scripts>/spec-sync.mjs <projectRoot> --dry-run`, then without `--dry-run` after the user agrees; or the hub's "Đồng bộ từ spec" / MCP `sync_from_spec`). It updates the existing collection in place and keeps ids and scenario examples. Only create a new collection if the user explicitly wants a separate one.
+- Note the base path of `servers[0].url` (e.g. `/v1`). The collection's `{{baseUrl}}` keeps it; the hub mock uses it.
+- **If `state.json` already has `collectionUid` for this spec: do NOT import again.** Run the sync instead:
+  `node <scripts>/spec-sync.mjs <projectRoot> --dry-run`, show the report, then without `--dry-run` once the user agrees
+  (or the hub's "Đồng bộ từ spec" / MCP `sync_from_spec`). It updates the same collection in place, keeping ids and scenario examples.
 
-## 2. Create the collection
-Use the Postman MCP tools if available, otherwise the script (same endpoints):
+## 2. Create spec and collection
+Postman MCP tools if available, otherwise the script (same endpoints):
 
 | Step | MCP tool | Script |
 |---|---|---|
 | Create spec | `createSpec` | `create-spec <file> --workspace <id>` |
-| Generate collection (async) | `generateCollection` + poll `getAsyncSpecTaskStatus` with backoff | `generate-collection <specId> --name "<title>"` (polls for you) |
+| Generate collection (async) | `generateCollection` + poll `getAsyncSpecTaskStatus` with backoff | `generate-collection <specId> --name "<title>"` (polls) |
 
-The finished task returns `details.resources[0].id` = the collection **UID** (`ownerId-collectionId`). Save `specId`, `collectionUid`, `specHash`, `sourceSpec`.
-Fallback if generation fails: `import-openapi <file> --workspace <id>` (synchronous).
+The finished task returns `details.resources[0].id` = the collection **UID** (`ownerId-collectionId`).
+Fallback if generation fails: `import-openapi <file> --workspace <id>` (synchronous; no spec in Postman).
+Save in `state.json`: `specId`, `collectionUid`, `sourceSpec` (path of the yml, relative to the project when possible), `specHash` (sha256 of the file).
 
-## 3. Normalize the examples (required - without it ~50% of a real spec answers wrongly)
-Postman generates one example per documented status code from the spec. Out of the box they break matching
-(measured on a real 96-endpoint spec: 48/96 endpoints returned the wrong example or 404):
-- path variables saved with values like `"string"` are NOT wildcards -> 404 for real ids;
-- item endpoints (`/x/:id`) get answered by list endpoints (`/x`);
-- endpoints whose success code is 201/204 get answered by a 401/500 example (Postman's tie-break prefers 200 only);
-- random query values (`?searchWord=string&page=1`) skew the score.
-
-Fix everything in one call (keeps all ids):
+## 3. Clean the examples
+`node <scripts>/postman-rest.mjs normalize-collection <collectionUid>` (one PUT, ids kept): the lowest 2xx example of every request becomes the default (`{{baseUrl}}/path/{{var}}`, no query); other examples are tagged `?__example=<code>` and are selected with `x-mock-response-code`.
+Then `export-collection <collectionUid> --out .postman-mock/collections/<collectionUid>.json` (the hub's local cache) and
+`node <scripts>/analyze-collection.mjs .postman-mock/collections/<collectionUid>.json` - requests without examples, empty bodies, `<string>` placeholders.
+Fix those in Postman with `upsert-example` (the Postman API only stores the legacy fields this script builds):
+```json
+{ "name": "200 OK", "code": 200, "body": { "id": 1 }, "request": { "method": "GET", "url": "{{baseUrl}}/pets/{{id}}" } }
 ```
-node <scripts>/postman-rest.mjs normalize-collection <collectionUid>
-```
-It makes the lowest 2xx example of every request the default (`{{baseUrl}}/path/{{var}}`, no query) and moves every other example behind `?__example=<code>`, so errors only answer when asked for with `x-mock-response-code: <code>`. Examples named `... :: ...` (user scenarios) are left alone.
+`node <scripts>/postman-rest.mjs upsert-example <file.json> --collection <uid> --request <requestId>` (new) or `--response <exampleId>` (update).
+Bodies: keep the spec example; replace placeholders with realistic data from the schema.
 
-Then:
-- `export-collection <collectionUid> --out .postman-mock/collection.json`
-- `node <scripts>/analyze-collection.mjs .postman-mock/collection.json` - lists requests without examples, empty bodies, `<string>` placeholders. Fill/fix those with `upsert-example` (format in **mock-set**). Never send collection v2.1 fields to `createCollectionResponse`/`updateCollectionResponse`: they are silently dropped.
-- Record request ids and default example ids per endpoint in state.
+## 4. Mock in the Mock Hub
+- If the hub is running (`http://localhost:4800`), create the mock: dashboard "+ Mock mới" (collection and base path default to the project's), or REST `POST /api/projects/<project>/mocks` `{ "mock": "<name>" }` with header `x-dashboard: 1`, or MCP `create_mock`.
+- Otherwise tell the user to start it (**mock-dashboard**): `node <scripts>/dashboard.mjs --port 4800 --project <name>` and create the mock there.
+- Verify: `node <scripts>/verify-mock.mjs .postman-mock/collections/<collectionUid>.json http://localhost:4800/gw/<project>/<mock>` -> expect N/N.
 
-## 4. Create the mock
-MCP `createMock` (collection = UID, `private: true`) or `create-mock <collectionUid> --workspace <id> --name "<title> mock"`.
-Private by default; callers send `x-api-key`. Public only if the user asks (`publishMock`). Save `mock.id`, `mock.url`.
-
-## 5. Local copy
-`export-collection <collectionUid> --out .postman-mock/collection.json` again after the fixes.
-
-## 6. Verify and report
-- `node <scripts>/verify-mock.mjs .postman-mock/collection.json <mockUrl>` calls every endpoint once and checks it returns its own default example (uses ~1 mock call per endpoint). Expect N/N; re-run single failures with `--only <path>` (Postman occasionally returns a transient 500 under parallel load).
-- Table: endpoint | example codes. Then the URLs:
-  ```
-  curl -H "x-api-key: $POSTMAN_API_KEY" <mockUrl><basePath>/pets/1
-  node <scripts>/local-mock.mjs --collection .postman-mock/collection.json --port 4010   # http://localhost:4010<basePath>
-  ```
-- Suggest **mock-set** for custom cases.
+## 5. Report
+Table endpoint | example codes, the Postman collection, the mock URL (`http://localhost:4800/gw/<project>/<mock><basePath>`), and how to add mock data (**mock-dashboard**: "+ Tạo dữ liệu mock", or MCP `upsert_case`).

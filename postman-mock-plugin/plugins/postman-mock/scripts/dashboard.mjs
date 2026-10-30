@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// Mock hub: dashboard + MCP server + dev gateway for Postman code mocks. No dependencies; Node 18+.
+// Mock hub: dashboard + MCP server + mock server built on a Postman collection. No dependencies; Node 18+.
+// The hub answers mock requests itself (mock-engine.mjs) from the collection's examples plus the mock data
+// you create (flows, conditional cases, enable per flow) - changes apply immediately, no Postman runtime.
+// Postman is only used for the collection (created by mock-import, kept in sync by spec-sync).
 //
 // Local (one project = the current folder, http://127.0.0.1 only, no login):
 //   node dashboard.mjs [--port 4800] [--root <project dir>] [--project <name>]
@@ -12,29 +15,22 @@
 //             "projects": { "jumpapp": { "root": "C:/work/jumpapp" } },
 //             "tokens": [ { "name": "loi", "sha256": "...", "projects": ["*"] } ] }
 //
-//   /                          dashboard (edit mock data per API / flow / case, enable per flow, modes, push)
+//   /                          dashboard (edit mock data per API / flow / case, enable per flow, Mock/Real)
 //   /mcp                       MCP endpoint (streamable HTTP, JSON responses) - tools to create mock data
-//   /gw/<project>/<mock>/...   gateway for client apps: serves the MOCK side; APIs switched to "real"
-//                              are answered with 307 to realBaseUrl - clients should call those directly,
-//                              using /gw/<project>/<mock>/__routes (JSON) or /__client.js (baseUrlFor()).
-// Postman's mock sandbox blocks outbound network, so "real" can never be done inside the mock code.
+//   /gw/<project>/<mock>/...   mock server for client apps; APIs switched to "real" are answered with
+//                              307 to realBaseUrl - clients should call those directly, using
+//                              /gw/<project>/<mock>/__routes (JSON) or /__client.js (urlFor()).
 
 import http from 'node:http';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { cloudPush } from './app-mock.mjs';
-import { syncFromSpec, orphansOf, schemaWarnings, resolveOrphan, fileHash } from './spec-sync.mjs';
-import {
-  ensureV2, migrateLegacy, ops, routes, clientModule, definitionHash, modeOf, allFlows,
-  findApi, checkApi, pathRegex, FLOW_NAME, StoreError,
-} from './mock-store.mjs';
+import { syncFromSpec, orphansOf, schemaWarnings, resolveOrphan, fileHash, collectionCachePath } from './spec-sync.mjs';
+import { respond } from './mock-engine.mjs';
+import { ensureV2, migrateLegacy, ops, routes, clientModule, modeOf, allFlows, findApi, checkApi, StoreError } from './mock-store.mjs';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const args = process.argv.slice(2);
 const opt = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : fallback; };
 const HTML = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard.html');
@@ -144,35 +140,53 @@ async function postmanApi(urlPath) {
 }
 
 const normPath = segments => '/' + segments.filter(s => s !== '').map(s => s.replace(/^\{\{(.+)\}\}$/, ':$1')).join('/');
+const isScenario = r => String(r.name ?? '').includes(' :: ');
 
-async function loadEndpoints(cacheKey, def, refresh) {
-  const key = `${cacheKey}:${JSON.stringify(def.source)}`;
-  if (!refresh && endpointCache.has(key)) return endpointCache.get(key);
-  const endpoints = [];
-  if (def.source?.collection) {
-    const { collection } = await postmanApi(`/collections/${encodeURIComponent(def.source.collection)}`);
-    const walk = (items, folder) => {
-      for (const item of items ?? []) {
-        if (item.item) { walk(item.item, item.name); continue; }
-        const method = item.request?.method ?? 'GET';
-        const p = normPath(item.request?.url?.path ?? []);
-        const examples = (item.response ?? []).filter(r => !String(r.name).includes(' :: '))
-          .map(r => ({ name: r.name, status: r.code, body: r.body ?? '' })).sort((a, b) => a.status - b.status);
-        endpoints.push({ key: `${method} ${p}`, method, path: p, name: item.name, folder: folder ?? '', examples });
-      }
-    };
-    walk(collection.item);
-  } else if (def.mockId) {
-    const r = spawnSync(`postman mock get ${def.mockId} --json`, { shell: true, encoding: 'utf8', windowsHide: true });
-    const info = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
-    const seen = new Set();
-    for (const sc of info.scenarios ?? []) for (const e of sc.endpoints ?? []) {
-      const k = `${e.method} ${e.path}`;
-      if (!seen.has(k)) { seen.add(k); endpoints.push({ key: k, method: e.method, path: e.path, name: '', folder: '', examples: [] }); }
-    }
+// The collection is cached in <project>/.postman-mock/collections/<uid>.json so the hub also works offline;
+// "refresh" (⟳ in the dashboard) and spec sync update it from Postman.
+async function loadCollection(proj, uid, refresh = false) {
+  const file = collectionCachePath(proj.root, uid);
+  if (!refresh && fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    const { collection } = await postmanApi(`/collections/${encodeURIComponent(uid)}`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(collection));
+    return collection;
+  } catch (e) {
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));   // offline: keep serving the cache
+    throw e;
   }
+}
+
+async function loadEndpoints(proj, def, refresh) {
+  const uid = def.source?.collection;
+  if (!uid) throw new StoreError(400, 'This mock has no collection (source.collection). Re-create it from a Postman collection.');
+  const key = `${proj.root}:${uid}`;
+  if (!refresh && endpointCache.has(key)) return endpointCache.get(key);
+  const collection = await loadCollection(proj, uid, refresh);
+  const endpoints = [];
+  const walk = (items, folder) => {
+    for (const item of items ?? []) {
+      if (item.item) { walk(item.item, item.name); continue; }
+      const method = item.request?.method ?? 'GET';
+      const p = normPath(item.request?.url?.path ?? []);
+      const toExample = r => ({ name: r.name, status: r.code, body: r.body ?? '', headers: (r.header ?? []).filter(h => !h.disabled), scenario: isScenario(r) });
+      const plain = (item.response ?? []).filter(r => !isScenario(r)).map(toExample).sort((a, b) => a.status - b.status);
+      const scenarios = (item.response ?? []).filter(isScenario).map(toExample);
+      endpoints.push({ key: `${method} ${p}`, method, path: p, name: item.name, folder: folder ?? '', examples: [...plain, ...scenarios] });
+    }
+  };
+  walk(collection.item);
   endpointCache.set(key, endpoints);
   return endpoints;
+}
+
+// Base path of the collection's {{baseUrl}} (e.g. /api/v1), used when a mock is created without one.
+async function collectionBasePath(proj, uid) {
+  const col = await loadCollection(proj, uid);
+  const v = (col.variable ?? []).find(x => x.key === 'baseUrl')?.value ?? '';
+  const p = v.replace(/^[a-z]+:\/\/[^/]+/i, '').replace(/\/$/, '');
+  return p.startsWith('/') ? p : '';
 }
 
 // Loads a definition (migrating v1 files on the fly) together with its API list.
@@ -180,7 +194,7 @@ async function loadMock(proj, mock, { refresh = false } = {}) {
   const file = defPath(proj, mock);
   if (!fs.existsSync(file)) throw new StoreError(404, `No mock "${mock}" in project "${proj.name}"`);
   const def = ensureV2(JSON.parse(fs.readFileSync(file, 'utf8')));
-  const endpoints = await loadEndpoints(`${proj.name}/${mock}`, def, refresh);
+  const endpoints = await loadEndpoints(proj, def, refresh);
   if (migrateLegacy(def, endpoints) || def.version !== JSON.parse(fs.readFileSync(file, 'utf8')).version) writeDef(proj, mock, def);
   return { def, endpoints };
 }
@@ -212,7 +226,8 @@ function startSync(proj, mock, { dryRun = false, force = false } = {}) {
       if (r.unchanged) { job.report = { unchanged: true }; job.log.push('The spec has not changed since the last sync.'); return; }
       const { endpoints, ...summary } = r;
       if (!dryRun) {
-        for (const key of [...endpointCache.keys()]) if (key.includes(def.source.collection)) endpointCache.delete(key);
+        // spec-sync rewrote the collection cache; drop the in-memory copies so the hub serves the new APIs now.
+        for (const key of [...endpointCache.keys()]) if (key.endsWith(':' + def.source.collection)) endpointCache.delete(key);
       }
       // Mock data of every mock in the project built on this collection.
       const mocks = listMocks(proj).map(m => {
@@ -222,7 +237,7 @@ function startSync(proj, mock, { dryRun = false, force = false } = {}) {
       }).filter(Boolean);
       job.report = { ...summary, mocks };
       job.log.push(`${dryRun ? 'Would change' : 'Synced'}: +${summary.added.length} / -${summary.removed.length} APIs, ${summary.renamed.length} renamed, ${summary.lostScenarios.length} scenario examples dropped.`);
-      if (!dryRun) job.log.push('Push the code mocks to apply the new APIs/examples (orphaned data: see the report).');
+      if (!dryRun) job.log.push('The mock now serves the new APIs/examples. Check orphaned data and schema warnings in the report.');
     } catch (e) {
       job.error = e.message;
       job.log.push(`Error: ${e.message}`);
@@ -239,18 +254,14 @@ const gatewayBase = (proj, mock, def) =>`${PUBLIC}/gw/${proj.name}/${mock}${def.
 
 function summary(proj, mock, def) {
   const k = `${proj.name}/${mock}`;
-  const runner = runners.get(k);
   return {
-    project: proj.name, mock, name: def.name, mockId: def.mockId ?? null, postmanUrl: def.postmanUrl ?? null,
-    pushedAt: def.pushedAt ?? null, dirty: !def.mockId || definitionHash(def) !== def.pushedHash,
+    project: proj.name, mock, name: def.name ?? mock, collection: def.source?.collection ?? null,
     realBaseUrl: effectiveReal(proj, def), mockRealBaseUrl: def.realBaseUrl || '', projectRealBaseUrl: readProjectState(proj).realBaseUrl || '',
     realBaseUrlScope: def.realBaseUrl ? 'mock' : readProjectState(proj).realBaseUrl ? 'project' : 'none',
     defaultMode: def.defaultMode ?? 'mock', activeFlow: def.activeFlow ?? 'default',
     flows: allFlows(def), basePath: def.basePath ?? '',
     gateway: gatewayBase(proj, mock, def),
     routesUrl: `${PUBLIC}/gw/${proj.name}/${mock}/__routes`, clientModuleUrl: `${PUBLIC}/gw/${proj.name}/${mock}/__client.js`,
-    runner: runner ? { status: runner.status, port: runner.port, log: runner.log.slice(-15) } : { status: 'stopped' },
-    push: publicJob(pushes.get(k)),
     spec: specInfo(proj, def),
     sync: publicJob(syncs.get(k)),
   };
@@ -261,18 +272,20 @@ function apiView(def, e) {
   return { key: e.key, method: e.method, path: e.path, name: e.name, folder: e.folder, mode: a.mode ?? null, effectiveMode: modeOf(def, e.key), flows: a.flows ?? {} };
 }
 
+// A mock = mock data on top of one Postman collection. Defaults: the project's collection (from mock-import)
+// and the base path of the collection's {{baseUrl}}.
 async function createMock(proj, b) {
   const mock = String(b.mock ?? '').toLowerCase();
   if (!SLUG.test(mock)) throw new StoreError(400, 'mock: lower-case ASCII, digits and dashes');
   if (fs.existsSync(defPath(proj, mock))) throw new StoreError(409, `Mock "${mock}" already exists`);
-  if (!b.collection && !b.spec) throw new StoreError(400, 'collection (Postman collection UID) or spec (path) is required');
-  const workspace = b.workspace || defaultWorkspace(proj);
-  if (!workspace) throw new StoreError(400, 'workspace is required (no default workspace for this project)');
+  const collection = b.collection || readProjectState(proj).collectionUid;
+  if (!collection) throw new StoreError(400, 'collection (Postman collection UID) is required - run mock-import first or pass it');
+  const col = await loadCollection(proj, collection);
+  const basePath = b.basePath ?? await collectionBasePath(proj, collection);
   const def = {
-    version: 2, name: b.name || mock, workspace, mockId: null,
-    source: b.collection ? { collection: b.collection } : { spec: b.spec },
-    ...(b.basePath ? { basePath: b.basePath } : {}),
-    stateful: !!b.stateful, realBaseUrl: '', defaultMode: 'mock', activeFlow: 'default', flows: [], apis: {},
+    version: 2, name: b.name || col.info?.name || mock, workspace: b.workspace || defaultWorkspace(proj),
+    source: { collection }, ...(basePath ? { basePath } : {}),
+    realBaseUrl: '', defaultMode: 'mock', activeFlow: 'default', flows: [], apis: {},
   };
   // A URL given when creating a mock becomes the project's default unless one is already saved.
   if (b.realBaseUrl) {
@@ -284,91 +297,7 @@ async function createMock(proj, b) {
   return summary(proj, mock, def);
 }
 
-// ---------- runner (cloud mock run locally) and push ----------
-
-const runners = new Map();
-const pushes = new Map();
-
-const portOpen = port => new Promise(resolve => {
-  const s = net.connect(port, '127.0.0.1', () => { s.destroy(); resolve(true); });
-  s.on('error', () => resolve(false));
-});
-
-async function freePort(def) {
-  if (def.runnerPort) return Number(def.runnerPort);
-  const used = new Set([...runners.values()].filter(r => r.status !== 'stopped').map(r => r.port));
-  for (let p = 4900; p < 5100; p++) if (!used.has(p) && !(await portOpen(p))) return p;
-  throw new StoreError(503, 'No free port for the mock runner');
-}
-
-async function startRunner(proj, mock) {
-  const k = `${proj.name}/${mock}`;
-  const current = runners.get(k);
-  if (current && current.status !== 'stopped') {
-    for (let i = 0; i < 60 && current.status === 'starting'; i++) await new Promise(r => setTimeout(r, 500));
-    return current;
-  }
-  const def = ensureV2(JSON.parse(fs.readFileSync(defPath(proj, mock), 'utf8')));
-  if (!def.mockId) throw new StoreError(409, 'Push the mock to the cloud first');
-  const port = await freePort(def);
-  // Runs in the temp dir so the CLI never writes into a project.
-  const child = spawn(`postman mock run ${def.mockId} --port ${port}`, { shell: true, cwd: os.tmpdir(), windowsHide: true, detached: process.platform !== 'win32' });
-  const runner = { child, port, status: 'starting', log: [] };
-  runners.set(k, runner);
-  const onData = d => { runner.log.push(...String(d).split(/\r?\n/).filter(Boolean)); runner.log = runner.log.slice(-200); };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
-  child.on('exit', code => { runner.status = 'stopped'; runner.log.push(`[exited ${code}]`); });
-  for (let i = 0; i < 60 && runner.status === 'starting'; i++) {
-    if (await portOpen(port)) runner.status = 'running';
-    else await new Promise(r => setTimeout(r, 500));
-  }
-  if (runner.status !== 'running') { stopRunner(proj, mock); throw new StoreError(502, `Mock did not start:\n${runner.log.join('\n')}`); }
-  return runner;
-}
-
-// Stops only the process tree this hub started (never other Postman processes, e.g. the desktop app).
-function stopRunner(proj, mock) {
-  const runner = runners.get(`${proj.name}/${mock}`);
-  if (!runner || runner.status === 'stopped') return;
-  try {
-    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(runner.child.pid), '/T', '/F'], { windowsHide: true });
-    else process.kill(-runner.child.pid, 'SIGTERM');
-  } catch { /* already gone */ }
-  runner.status = 'stopped';
-}
-
-function startPush(proj, mock) {
-  const k = `${proj.name}/${mock}`;
-  const current = pushes.get(k);
-  if (current?.running) return current;
-  const job = { running: true, log: ['Building the mock code and pushing it to Postman cloud...'], result: null, error: null, at: new Date().toISOString() };
-  pushes.set(k, job);
-  job.done = (async () => {
-    try {
-      job.result = await cloudPush(defPath(proj, mock));
-      job.log.push(`Pushed: ${job.result.created ? 'created' : 'updated'} ${job.result.mockId} (flows: ${job.result.flows.join(', ')})`);
-      const runner = runners.get(k);
-      if (runner && runner.status !== 'stopped') {
-        job.log.push('Restarting the local mock with the new code...');
-        stopRunner(proj, mock);
-        await new Promise(r => setTimeout(r, 800));
-        await startRunner(proj, mock);
-        job.log.push('Local mock restarted.');
-      }
-    } catch (e) {
-      job.error = e.message;
-      job.log.push(`Error: ${e.message}`);
-    } finally {
-      job.running = false;
-    }
-  })();
-  return job;
-}
-
-// ---------- gateway ----------
-
-const HOP = ['host', 'connection', 'content-length', 'transfer-encoding', 'keep-alive', 'upgrade', 'proxy-connection', 'te', 'trailer'];
+// ---------- gateway (mock server) ----------
 
 function cors(req) {
   return {
@@ -378,19 +307,6 @@ function cors(req) {
     'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD',
     'access-control-expose-headers': '*',
   };
-}
-
-function forward(target, req, res, extraHeaders) {
-  const u = new URL(target);
-  const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !HOP.includes(k)));
-  Object.assign(headers, extraHeaders, { host: u.host });
-  const up = http.request(u, { method: req.method, headers }, upRes => {
-    const out = Object.fromEntries(Object.entries(upRes.headers).filter(([k]) => !HOP.includes(k) && !k.startsWith('access-control-')));
-    res.writeHead(upRes.statusCode, { ...out, ...cors(req), 'x-gateway-mode': 'mock' });
-    upRes.pipe(res);
-  });
-  up.on('error', e => sendJson(res, 502, { error: 'gatewayError', message: e.message }, cors(req)));
-  req.pipe(up);
 }
 
 async function gateway(req, res, projName, mock, rest, search) {
@@ -413,9 +329,12 @@ async function gateway(req, res, projName, mock, rest, search) {
     res.writeHead(307, { location: real + inner + search, 'x-gateway-mode': 'real', ...cors(req) });
     return res.end();
   }
-  const runner = await startRunner(proj, mock);
-  const flow = req.headers['x-mock-scenario'] ?? (def.activeFlow && def.activeFlow !== 'default' ? def.activeFlow : undefined);
-  forward(`http://127.0.0.1:${runner.port}${rest}${search}`, req, res, flow ? { 'x-mock-scenario': flow } : {});
+  let bodyText = '';
+  for await (const c of req) bodyText += c;
+  const out = respond(def, endpoints, { method: req.method, path: inner, fullPath: rest, query: new URLSearchParams(search), headers: req.headers, bodyText });
+  if (out.delayMs) await new Promise(r => setTimeout(r, out.delayMs));
+  res.writeHead(out.status, { ...out.headers, ...cors(req), 'x-gateway-mode': 'mock', 'x-mock-source': encodeURIComponent(out.trace?.source ?? '') });
+  res.end(out.body);
 }
 
 // ---------- shared operations (REST API + MCP) ----------
@@ -424,12 +343,24 @@ async function mutate(proj, mock, fn) {
   const { def, endpoints } = await loadMock(proj, mock);
   const result = fn(def, endpoints);
   writeDef(proj, mock, def);
-  return { result, dirty: definitionHash(def) !== def.pushedHash || !def.mockId };
+  return { result: result ?? { ok: true } };
 }
 
-async function waitPush(job, seconds) {
-  await Promise.race([job.done, new Promise(r => setTimeout(r, seconds * 1000))]);
-  return { running: job.running, error: job.error, result: job.result, log: job.log };
+// Runs a request through the mock engine without HTTP (MCP try_request / dashboard tests).
+async function tryRequest(proj, mock, a) {
+  const { def, endpoints } = await loadMock(proj, mock);
+  const [p, qs = ''] = String(a.path ?? '/').split('?');
+  const base = def.basePath ?? '';
+  const inner = base && (p === base || p.startsWith(base + '/')) ? p.slice(base.length) || '/' : p;
+  const headers = Object.fromEntries(Object.entries(a.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
+  if (a.flow) headers['x-mock-scenario'] = a.flow;
+  const method = String(a.method ?? 'GET').toUpperCase();
+  const ep = findApi(endpoints, method, inner);
+  if (ep && modeOf(def, ep.key) === 'real') return { mode: 'real', api: ep.key, url: effectiveReal(proj, def) + inner + (qs ? '?' + qs : '') };
+  const out = respond(def, endpoints, { method, path: inner, fullPath: p, query: new URLSearchParams(qs), headers, bodyText: a.body === undefined ? '' : typeof a.body === 'string' ? a.body : JSON.stringify(a.body) });
+  let body = out.body;
+  try { body = JSON.parse(out.body); } catch { /* text */ }
+  return { mode: 'mock', status: out.status, delayMs: out.delayMs, source: out.trace?.source, api: out.trace?.api, flow: out.trace?.flow, headers: out.headers, body };
 }
 
 // ---------- MCP ----------
@@ -477,11 +408,11 @@ const TOOLS = [
       if (a.workspace) fs.writeFileSync(path.join(proj.root, '.postman-mock', 'state.json'), JSON.stringify({ workspaceId: a.workspace }, null, 2));
       return { project: a.project, root: proj.root };
     } },
-  { name: 'list_mocks', description: 'List the code mocks of a project with gateway URL, push state and flows.',
+  { name: 'list_mocks', description: 'List the mocks of a project with mock URL, flows, real base URL and spec status (spec.changed = the OpenAPI file changed since the last sync).',
     inputSchema: { type: 'object', properties: projectArg, required: ['project'] },
     run: async (a, auth) => { const proj = guard(auth, a.project); return Promise.all(listMocks(proj).map(async m => summary(proj, m, (await loadMock(proj, m)).def))); } },
-  { name: 'create_mock', description: 'Create a code mock from a Postman collection (UID) or an OpenAPI spec path on the hub. Push it afterwards.',
-    inputSchema: { type: 'object', properties: { ...mockArg, name: S, collection: { ...S, description: 'Postman collection UID' }, spec: { ...S, description: 'OpenAPI file path (relative to .postman-mock/code-mocks)' }, basePath: { ...S, description: 'e.g. /api/v1 (collection sources)' }, realBaseUrl: S, workspace: S, stateful: { type: 'boolean' } }, required: ['project', 'mock'] },
+  { name: 'create_mock', description: 'Create a mock on top of a Postman collection. Defaults: the project\'s collection (from mock-import) and the base path of its {{baseUrl}}. It serves immediately.',
+    inputSchema: { type: 'object', properties: { ...mockArg, name: S, collection: { ...S, description: 'Postman collection UID (default: the project\'s)' }, basePath: { ...S, description: 'e.g. /api/v1 (default: from the collection)' }, realBaseUrl: S }, required: ['project', 'mock'] },
     run: (a, auth) => createMock(guard(auth, a.project), a) },
   { name: 'list_apis', description: 'List the APIs of a mock: key, name, mode (mock/real) and the mock data per flow. Use the key in other tools.',
     inputSchema: { type: 'object', properties: { ...mockArg, filter: { ...S, description: 'Substring of method, path, name or folder' } }, required: ['project', 'mock'] },
@@ -515,7 +446,7 @@ const TOOLS = [
   { name: 'set_api_enabled', description: 'Enable or disable the mock data of an API in a flow. Disabled: the API answers with the default flow data in that flow (default flow disabled: the collection example).',
     inputSchema: { type: 'object', properties: { ...apiArg, ...flowArg, enabled: { type: 'boolean' } }, required: ['project', 'mock', 'api', 'enabled'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, (def, eps) => ops.setEnabled(def, checkApi(eps, a.api), a.flow ?? 'default', a.enabled))) },
-  { name: 'set_api_mode', description: 'Use the mock or the real deployed API for an API ("real": clients call realBaseUrl directly). api="*" sets every API. Takes effect immediately (no push).',
+  { name: 'set_api_mode', description: 'Use the mock or the real deployed API for an API ("real": clients call realBaseUrl directly). api="*" sets every API.',
     inputSchema: { type: 'object', properties: { ...mockArg, api: { ...S, description: 'API key or "*"' }, mode: { type: 'string', enum: ['mock', 'real', 'inherit'] } }, required: ['project', 'mock', 'api', 'mode'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, (def, eps) => (a.api === '*' ? ops.setAllModes(def, a.mode) : ops.setMode(def, checkApi(eps, a.api).key, a.mode)))) },
   { name: 'set_mock_settings', description: 'Set realBaseUrl (real environment; saved for the whole project unless realScope="mock"), defaultMode and activeFlow (flow served when the client sends no x-mock-scenario header).',
@@ -537,13 +468,13 @@ const TOOLS = [
   { name: 'add_flow', description: 'Add a flow (scenario). Clients select it with header x-mock-scenario: <flow>.',
     inputSchema: { type: 'object', properties: { ...mockArg, flow: S }, required: ['project', 'mock', 'flow'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, def => ops.addFlow(def, a.flow))) },
-  { name: 'remove_flow', description: 'Remove a flow; on the next push the cloud copy is reset to default data (delete it for good in the Postman app).',
+  { name: 'remove_flow', description: 'Remove a flow and its mock data.',
     inputSchema: { type: 'object', properties: { ...mockArg, flow: S }, required: ['project', 'mock', 'flow'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, def => ops.removeFlow(def, a.flow))) },
-  { name: 'push_mock', description: 'Regenerate the JS files of the mock and push them to the Postman cloud mock. Waits up to waitSeconds (default 120).',
-    inputSchema: { type: 'object', properties: { ...mockArg, waitSeconds: { type: 'integer', minimum: 0, maximum: 300 } }, required: ['project', 'mock'] },
-    run: async (a, auth) => { const proj = guard(auth, a.project); await loadMock(proj, a.mock); return waitPush(startPush(proj, a.mock), a.waitSeconds ?? 120); } },
-  { name: 'sync_from_spec', description: 'After the OpenAPI file changed: update the Postman collection in place (ids kept), keep scenario examples, and report added / removed / renamed APIs, orphaned mock data and schema warnings. dryRun only reports. Push the mock afterwards.',
+  { name: 'try_request', description: 'Send a request through the mock (no HTTP needed) and see what it returns and why (which case / data / example answered). path may include the base path and a query string.',
+    inputSchema: { type: 'object', properties: { ...mockArg, method: { ...S, default: 'GET' }, path: { ...S, description: 'e.g. /api/v1/constructions/99999999?x=1' }, headers: { type: 'object', additionalProperties: S }, body: { description: 'JSON body' }, flow: { ...S, description: 'Same as header x-mock-scenario' } }, required: ['project', 'mock', 'path'] },
+    run: (a, auth) => tryRequest(guard(auth, a.project), a.mock, a) },
+  { name: 'sync_from_spec', description: 'After the OpenAPI file changed: update the Postman collection in place (ids kept), keep scenario examples, refresh the mock, and report added / removed / renamed APIs, orphaned mock data and schema warnings. dryRun only reports.',
     inputSchema: { type: 'object', properties: { ...mockArg, dryRun: { type: 'boolean' }, force: { type: 'boolean', description: 'Sync even if the file hash did not change' }, waitSeconds: { type: 'integer', minimum: 0, maximum: 300 } }, required: ['project', 'mock'] },
     run: async (a, auth) => {
       const proj = guard(auth, a.project);
@@ -555,9 +486,6 @@ const TOOLS = [
   { name: 'resolve_orphan', description: 'Mock data whose API no longer exists after a spec change: move it to another API key (path params in conditions are renamed by position) or delete it (omit "to").',
     inputSchema: { type: 'object', properties: { ...mockArg, from: { ...S, description: 'Orphaned API key' }, to: { ...S, description: 'New API key; omit to delete the data' } }, required: ['project', 'mock', 'from'] },
     run: async (a, auth) => (await mutate(guard(auth, a.project), a.mock, def => resolveOrphan(def, a.from, a.to || null))) },
-  { name: 'get_push_status', description: 'Status of the last push of a mock.',
-    inputSchema: { type: 'object', properties: mockArg, required: ['project', 'mock'] },
-    run: (a, auth) => { guard(auth, a.project); return publicJob(pushes.get(`${a.project}/${a.mock}`)) ?? { running: false, log: ['no push yet'] }; } },
   { name: 'get_routes', description: 'Routing table for client apps: which base URL (mock gateway or real API) each API should use, plus the URLs of /__routes and /__client.js.',
     inputSchema: { type: 'object', properties: mockArg, required: ['project', 'mock'] },
     run: async (a, auth) => {
@@ -568,11 +496,12 @@ const TOOLS = [
     } },
 ];
 
-const MCP_INSTRUCTIONS = 'Mock hub for Postman code mocks. Typical flow: list_projects -> list_mocks -> list_apis -> get_api (see examples) -> ' +
-  'set_api_response / upsert_case (conditions on path params, query, headers, body) -> push_mock. Flows are scenarios selected with header ' +
-  'x-mock-scenario; set_api_enabled turns an API\'s data on/off per flow (off = default data). set_api_mode switches an API between the mock ' +
-  'and the real deployed API (realBaseUrl), which clients then call directly. Data changes need push_mock; modes/settings do not. ' +
-  'When the OpenAPI file changed (list_mocks shows spec.changed): sync_from_spec (dryRun first if unsure) -> resolve_orphan for each orphan -> push_mock.';
+const MCP_INSTRUCTIONS = 'Mock hub: mock servers built on Postman collections; every change applies immediately. Typical flow: list_projects -> ' +
+  'list_mocks -> list_apis -> get_api (see examples) -> set_api_response / upsert_case (conditions on path params, query, headers, body) -> ' +
+  'try_request to verify. Flows are scenarios selected with header x-mock-scenario; set_api_enabled turns an API\'s data on/off per flow ' +
+  '(off = default data). set_api_mode switches an API between the mock and the real deployed API (realBaseUrl, saved per project), which ' +
+  'clients then call directly (get_routes). When the OpenAPI file changed (list_mocks shows spec.changed): sync_from_spec (dryRun first) -> ' +
+  'resolve_orphan for each orphan -> fix schemaWarnings.';
 
 async function mcp(req, res) {
   if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); return res.end(); }
@@ -654,11 +583,9 @@ async function api(req, res, parts) {
     case 'PUT mode': return done(await mutate(proj, mock, (def, eps) => (b.api === '*' ? ops.setAllModes(def, b.mode) : ops.setMode(def, checkApi(eps, b.api).key, b.mode))));
     case 'POST flows': return done(await mutate(proj, mock, def => ops.addFlow(def, b.flow)));
     case 'DELETE flows': return done(await mutate(proj, mock, def => ops.removeFlow(def, b.flow)));
-    case 'POST push': await loadMock(proj, mock); return sendJson(res, 202, publicJob(startPush(proj, mock)));
     case 'POST sync': await loadMock(proj, mock); return sendJson(res, 202, publicJob(startSync(proj, mock, { dryRun: !!b.dryRun, force: !!b.force })));
     case 'PUT orphan': return done(await mutate(proj, mock, def => resolveOrphan(def, b.from, b.to || null)));
-    case 'POST runner/start': await startRunner(proj, mock); return done(summary(proj, mock, (await loadMock(proj, mock)).def));
-    case 'POST runner/stop': stopRunner(proj, mock); return done(summary(proj, mock, (await loadMock(proj, mock)).def));
+    case 'POST try': return done(await tryRequest(proj, mock, b));
     default: throw new StoreError(404, 'Unknown API');
   }
 }
@@ -685,12 +612,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const shutdown = () => {
-  for (const k of runners.keys()) { const [p, m] = k.split('/'); try { stopRunner(project(p), m); } catch { /* project removed */ } }
-  process.exit(0);
-};
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
 
 server.listen(PORT, HOST, () => {
   console.log(`Mock hub ${VERSION} (${HUB ? 'shared, token login' : 'local'}) on http://${HOST}:${PORT}`);

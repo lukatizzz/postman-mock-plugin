@@ -1,11 +1,13 @@
 {
   "name": "postman-mock-tools",
-  "owner": { "name": "zyyx" },
+  "owner": {
+    "name": "zyyx"
+  },
   "plugins": [
     {
       "name": "postman-mock",
       "source": "./plugins/postman-mock",
-      "description": "Create Postman mock servers from OpenAPI specs and set per-case mock responses."
+      "description": "Turn an OpenAPI YAML into a Postman spec and collection, keep it in sync when the spec changes, and run a Mock Hub on it: conditional mock data per flow, Mock/Real per API, dashboard and MCP for the team."
     }
   ]
 }

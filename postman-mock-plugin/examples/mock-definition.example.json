@@ -1,27 +1,25 @@
 {
   "version": 2,
-  "name": "Petstore code mock",
-  "workspace": "<workspaceId>",
-  "mockId": null,
-  "source": { "spec": "./petstore.yaml" },
-  "stateful": false,
-  "realBaseUrl": "",
+  "name": "Petstore mock",
+  "source": { "collection": "<collection uid from mock-import>" },
+  "basePath": "/v1",
   "defaultMode": "mock",
   "activeFlow": "default",
   "flows": ["sold-out"],
   "apis": {
-    "GET /v1/pets/:petId": {
+    "GET /pets/:id": {
       "flows": {
         "default": {
           "cases": [
-            { "name": "not found", "when": { "params": { "petId": "999" } }, "response": { "status": 404, "body": { "code": "PET_NOT_FOUND" } } },
+            { "name": "not found", "when": { "params": { "id": "999" } }, "response": { "status": 404, "body": { "code": "PET_NOT_FOUND" } } },
             { "name": "admin view", "when": { "headers": { "x-role": "admin" } }, "response": { "status": 200, "body": { "id": 1, "name": "Milo", "notes": "vet only" } } }
           ]
         },
         "sold-out": { "response": { "status": 200, "body": { "id": 7, "name": "Luna", "status": "sold" } } }
       }
     },
-    "POST /v1/auth/login": {
+    "POST /auth/login": {
+      "mode": "real",
       "flows": {
         "default": {
           "cases": [

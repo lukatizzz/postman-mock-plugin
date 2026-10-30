@@ -128,7 +128,7 @@
         <div><label>Headers (JSON)</label><input id="tHeaders" class="wide mono" placeholder='{"x-role":"admin"}'></div>
       </div>
       <div style="margin-top:8px"><label>Body (JSON, cho POST/PUT/PATCH)</label><textarea id="tBody" rows="2"></textarea></div>
-      <div class="row" style="margin-top:8px"><button id="tSend" class="small">Gửi</button><span class="hint">Dữ liệu đã lưu chỉ có hiệu lực sau khi <b>Push lên cloud</b>.</span></div>
+      <div class="row" style="margin-top:8px"><button id="tSend" class="small">Gửi</button><span class="hint">Gửi tới mock đang chạy – nhớ <b>Lưu</b> trước để thử dữ liệu mới.</span></div>
       <pre class="out" id="tOut" style="margin-top:8px">—</pre>
     </div>
     <div class="err" id="edErr"></div>
@@ -144,10 +144,8 @@
   <div class="dlg-body grid2">
     <div><label>Tên mock (a-z, 0-9, -)</label><input id="nmSlug" class="wide" placeholder="jumpapp"></div>
     <div><label>Tên hiển thị trên Postman</label><input id="nmName" class="wide" placeholder="JumpApp code mock"></div>
-    <div><label>Collection UID (từ mock-import)</label><input id="nmCollection" class="wide mono" placeholder="12345678-xxxx-..."></div>
-    <div><label>…hoặc đường dẫn spec OpenAPI trên hub</label><input id="nmSpec" class="wide mono" placeholder="../../docs/openapi.yaml"></div>
-    <div><label>Base path (collection)</label><input id="nmBase" class="wide mono" placeholder="/api/v1"></div>
-    <div><label>Workspace ID (để trống = mặc định của project)</label><input id="nmWs" class="wide mono"></div>
+    <div><label>Collection UID (để trống = collection của project, từ mock-import)</label><input id="nmCollection" class="wide mono" placeholder="12345678-xxxx-..."></div>
+    <div><label>Base path (để trống = lấy từ {{baseUrl}} của collection)</label><input id="nmBase" class="wide mono" placeholder="/api/v1"></div>
     <div style="grid-column:1/-1"><label>Real API base URL (để trống = dùng giá trị đã lưu của project)</label><input id="nmReal" class="wide mono" placeholder="https://dev.example.com/api/v1"></div>
     <div style="grid-column:1/-1" class="err" id="nmErr"></div>
   </div>
@@ -187,7 +185,6 @@
     <div class="rule" id="qRule">—</div>
     <div class="row" style="margin-top:8px">
       <div class="grow"><label>Tên (tự đặt, có thể sửa)</label><input id="qName" class="wide"></div>
-      <label class="switch" style="margin-top:16px"><input type="checkbox" id="qPush" checked> Push lên cloud ngay</label>
     </div>
     <div class="err" id="qErr"></div>
   </div>
@@ -260,7 +257,7 @@ async function loadMock(refresh) {
   state.data = await call('GET', M() + (refresh ? '?refresh=1' : ''));
   if (!state.data.flows.includes(state.flow)) state.flow = 'default';
   render();
-  if (state.data.push?.running) pollPush();
+  if (state.data.sync?.running) pollSync();
 }
 
 const entryOf = (api, flow) => api.flows?.[flow] ?? {};
@@ -277,9 +274,6 @@ function apiStatus(api, flow) {
 
 function render() {
   const d = state.data;
-  const r = d.runner;
-  const runBadge = r.status === 'running' ? `<span class="badge run">● mock chạy :${r.port}</span>` : r.status === 'starting' ? '<span class="badge warn">đang khởi động…</span>' : '<span class="badge">mock đã dừng</span>';
-  const pushBadge = !d.mockId ? '<span class="badge warn">chưa push</span>' : d.dirty ? '<span class="badge warn">có thay đổi chưa push</span>' : `<span class="badge ok">đã push ${d.pushedAt ? new Date(d.pushedAt).toLocaleString() : ''}</span>`;
   const q = state.filter.toLowerCase();
   const apis = d.apis.filter(a => !q || `${a.key} ${a.name} ${a.folder}`.toLowerCase().includes(q));
   let lastFolder = null;
@@ -304,13 +298,10 @@ function render() {
     <div class="row">
       <div class="grow">
         <div style="font-size:17px;font-weight:600">${esc(d.name)} <span class="muted" style="font-size:12px">${esc(d.project)} / ${esc(d.mock)}</span></div>
-        <div class="muted mono" style="font-size:12px">${d.mockId ? `mockId ${esc(d.mockId)} · <a href="${esc(d.postmanUrl)}" target="_blank" rel="noopener">mở trong Postman ↗</a>` : 'chưa có trên cloud'}</div>
+        <div class="muted mono" style="font-size:12px">collection ${esc(d.collection ?? '—')} · ${d.apis.length} API</div>
       </div>
-      ${pushBadge} ${runBadge}
-      <button id="runBtn">${r.status === 'stopped' ? '▶ Chạy mock' : '■ Dừng mock'}</button>
-      <button id="pushBtn" class="primary" ${d.push?.running ? 'disabled' : ''}>${d.push?.running ? 'Đang push…' : '⇪ Push lên cloud'}</button>
+      <span class="badge run">● mock đang chạy · sửa là có hiệu lực ngay</span>
     </div>
-    ${d.push ? `<pre class="out" style="margin-top:10px;max-height:110px">${esc(d.push.log.join('\n'))}</pre>` : ''}
     ${specBlock(d)}
   </div>
   ${syncReportCard(d)}
@@ -340,7 +331,7 @@ function render() {
     <details style="margin-top:10px">
       <summary class="muted">Cấu hình route cho app client (API Real gọi thẳng server thật)</summary>
       <div style="margin-top:8px" class="hint">
-        Client đọc bảng route để chọn base URL cho từng API. Đổi Mock/Real có hiệu lực ngay, không cần push.
+        Client đọc bảng route để chọn base URL cho từng API. Đổi Mock/Real có hiệu lực ngay.
       </div>
       <div class="row" style="margin-top:6px"><span class="muted">JSON:</span><code class="pill grow" id="routesUrl">${esc(d.routesUrl)}</code><button class="small" data-copy="#routesUrl">Copy</button></div>
       <div class="row" style="margin-top:6px"><span class="muted">ES module:</span><code class="pill grow" id="clientUrl">${esc(d.clientModuleUrl)}</code><button class="small" data-copy="#clientUrl">Copy</button></div>
@@ -395,7 +386,7 @@ function syncReportCard(d) {
     <div class="row"><b class="grow">${d.sync.dryRun ? 'Xem trước đồng bộ spec (chưa thay đổi gì)' : 'Kết quả đồng bộ spec'}</b>
       ${d.sync.dryRun ? '<button id="syncRun2" class="small primary">Đồng bộ thật</button>' : ''}
       <button id="syncHide" class="small">Ẩn</button></div>
-    <div class="hint">${d.sync.dryRun ? 'Sẽ' : 'Đã'} cập nhật collection, giữ nguyên ID. ${d.sync.dryRun ? '' : 'Bấm <b>Push lên cloud</b> để code mock dùng API / example mới.'}</div>
+    <div class="hint">${d.sync.dryRun ? 'Sẽ cập nhật' : 'Đã cập nhật'} collection, giữ nguyên ID. ${d.sync.dryRun ? '' : 'Mock đã dùng API / example mới.'}</div>
     ${list('API mới', r.added)}
     ${list('API bị xoá', r.removed, 'err')}
     ${list('Có thể đổi tên', r.renamed.map(x => `${x.from}  →  ${x.to}`))}
@@ -410,7 +401,7 @@ function orphanCard(d) {
   const opts = sel => d.apis.map(a => `<option value="${esc(a.key)}" ${a.key === sel ? 'selected' : ''}>${esc(a.key)}</option>`).join('');
   return `<div class="card" style="border-color:var(--warn)">
     <b>Dữ liệu mock mồ côi (${d.orphans.length})</b>
-    <div class="hint">API này không còn trong spec. Dữ liệu vẫn nằm trong định nghĩa và vẫn được push theo path cũ. Chuyển sang API mới (tên path param được đổi theo vị trí) hoặc xoá.</div>
+    <div class="hint">API này không còn trong collection nên dữ liệu không được dùng. Chuyển sang API mới (tên path param được đổi theo vị trí) hoặc xoá.</div>
     ${d.orphans.map((o, i) => `<div class="row" style="margin-top:8px">
       <code style="min-width:260px">${esc(o.key)}</code><span class="hint">${esc(o.flows.join(' · '))}</span>
       <span class="grow"></span>
@@ -443,11 +434,11 @@ function bindSync() {
     const o = state.data.orphans[b.dataset.orphanMove];
     const to = document.querySelector(`[data-orphan-to="${b.dataset.orphanMove}"]`).value;
     if (!to) return toast('Chọn API đích trước');
-    act(() => call('PUT', M() + '/orphan', { from: o.key, to }), `Đã chuyển dữ liệu sang ${to}. Nhớ push.`);
+    act(() => call('PUT', M() + '/orphan', { from: o.key, to }), `Đã chuyển dữ liệu sang ${to}.`);
   });
   document.querySelectorAll('[data-orphan-del]').forEach(b => b.onclick = () => {
     const o = state.data.orphans[b.dataset.orphanDel];
-    if (confirm(`Xoá dữ liệu mock của ${o.key}?`)) act(() => call('PUT', M() + '/orphan', { from: o.key }), 'Đã xoá. Nhớ push.');
+    if (confirm(`Xoá dữ liệu mock của ${o.key}?`)) act(() => call('PUT', M() + '/orphan', { from: o.key }), 'Đã xoá.');
   });
   document.querySelectorAll('[data-schema-edit]').forEach(b => b.onclick = () => { state.flow = b.dataset.schemaFlow; render(); openEditor(b.dataset.schemaEdit); });
 }
@@ -474,12 +465,10 @@ function bind() {
   $('#allMock').onclick = () => confirm('Chuyển tất cả API sang Mock?') && act(() => call('PUT', M() + '/mode', { api: '*', mode: 'mock' }));
   $('#allReal').onclick = () => confirm('Chuyển tất cả API sang Real?') && act(() => call('PUT', M() + '/mode', { api: '*', mode: 'real' }));
   $('#refreshApis').onclick = () => loadMock(true).then(() => toast('Đã tải lại danh sách API'));
-  $('#runBtn').onclick = e => { e.target.disabled = true; act(() => call('POST', M() + '/runner/' + (state.data.runner.status === 'stopped' ? 'start' : 'stop'))); };
-  $('#pushBtn').onclick = () => act(async () => { await call('POST', M() + '/push'); pollPush(); }, 'Bắt đầu push…');
   document.querySelectorAll('.seg button').forEach(b => b.onclick = () => act(() => call('PUT', M() + '/mode', { api: b.parentElement.dataset.api, mode: b.dataset.mode })));
   document.querySelectorAll('[data-enable]').forEach(c => c.onchange = () => act(() => call('PUT', M() + '/enabled', { api: c.dataset.enable, flow: state.flow, enabled: c.checked })));
   document.querySelectorAll('[data-flow]').forEach(t => t.onclick = e => { if (e.target.dataset.delflow) return; state.flow = t.dataset.flow; render(); });
-  document.querySelectorAll('[data-delflow]').forEach(x => x.onclick = () => confirm(`Bỏ flow "${x.dataset.delflow}"? Dữ liệu của flow sẽ bị xoá; trên cloud nó trở về như default ở lần push sau.`) && act(() => call('DELETE', M() + '/flows', { flow: x.dataset.delflow })));
+  document.querySelectorAll('[data-delflow]').forEach(x => x.onclick = () => confirm(`Bỏ flow "${x.dataset.delflow}"? Dữ liệu của flow sẽ bị xoá.`) && act(() => call('DELETE', M() + '/flows', { flow: x.dataset.delflow })));
   $('#addFlow').onclick = () => {
     const f = (prompt('Tên flow (a-z, 0-9, -), ví dụ qa-edge-cases') || '').trim();
     if (f) act(async () => { await call('POST', M() + '/flows', { flow: f }); state.flow = f; });
@@ -492,15 +481,6 @@ function bind() {
 async function act(fn, okMsg) {
   try { await fn(); if (okMsg) toast(okMsg); } catch (e) { toast(e.message, 6000); }
   await loadMock();
-}
-
-function pollPush() {
-  clearInterval(state.poll);
-  state.poll = setInterval(async () => {
-    const d = await call('GET', M());
-    state.data = d; render();
-    if (!d.push?.running) { clearInterval(state.poll); toast(d.push?.error ? 'Push lỗi: ' + d.push.error : 'Đã push lên cloud ✓', 4000); }
-  }, 2000);
 }
 
 // ---------- editor ----------
@@ -621,7 +601,7 @@ $('#edSave').onclick = async () => {
     }
     const entry = { enabled: $('#edEnabled').checked, cases, response: $('#edHasResp').checked ? readResp($('#edResp'), '') : undefined };
     await call('PUT', M() + '/flow-entry', { api: state.ed.api.key, flow: state.flow, entry });
-    $('#editDlg').close(); toast('Đã lưu. Bấm "Push lên cloud" để tạo lại file JS.', 3500); await loadMock();
+    $('#editDlg').close(); toast('Đã lưu – mock dùng dữ liệu mới ngay.', 3000); await loadMock();
   } catch (e) { $('#edErr').textContent = e.message; }
 };
 $('#tSend').onclick = async () => {
@@ -635,7 +615,8 @@ $('#tSend').onclick = async () => {
     $('#tOut').textContent = `${api.method} ${url} …`;
     const res = await fetch(url, { method: api.method, headers, body: hasBody ? $('#tBody').value : undefined, redirect: 'manual' });
     if (res.type === 'opaqueredirect' || res.status === 307) { $('#tOut').textContent = 'API đang ở chế độ Real → client gọi thẳng ' + (d.realBaseUrl || '(chưa đặt Real API base URL)'); return; }
-    $('#tOut').textContent = `${res.status} · mode=${res.headers.get('x-gateway-mode') || '?'}\n\n${pretty(await res.text())}` + (d.dirty ? '\n\n(Lưu ý: có thay đổi chưa push – mock đang chạy code cũ.)' : '');
+    const src = decodeURIComponent(res.headers.get('x-mock-source') || '');
+    $('#tOut').textContent = `${res.status} · ${src ? 'trả từ ' + src : 'mode=' + (res.headers.get('x-gateway-mode') || '?')}\n\n${pretty(await res.text())}`;
   } catch (e) { $('#tOut').textContent = 'Lỗi: ' + e.message; }
 };
 
@@ -777,8 +758,7 @@ $('#qSave').onclick = async () => {
     }
     $('#quickDlg').close();
     state.flow = flow;
-    if ($('#qPush').checked) { await call('POST', M() + '/push'); toast('Đã tạo, đang push lên cloud…', 3000); await loadMock(); pollPush(); }
-    else { toast('Đã tạo. Nhớ Push lên cloud.', 3000); await loadMock(); }
+    toast('Đã tạo – mock dùng dữ liệu mới ngay.', 3000); await loadMock();
   } catch (e) { $('#qErr').textContent = e.message; }
 };
 
@@ -789,10 +769,9 @@ $('#nmCreate').onclick = async () => {
   try {
     const m = await call('POST', `${P()}/mocks`, {
       mock: $('#nmSlug').value.trim(), name: $('#nmName').value.trim(), collection: $('#nmCollection').value.trim() || undefined,
-      spec: $('#nmSpec').value.trim() || undefined, basePath: $('#nmBase').value.trim() || undefined,
-      workspace: $('#nmWs').value.trim() || undefined, realBaseUrl: $('#nmReal').value.trim() || undefined,
+      basePath: $('#nmBase').value.trim() || undefined, realBaseUrl: $('#nmReal').value.trim() || undefined,
     });
-    $('#newDlg').close(); toast('Đã tạo. Bấm "Push lên cloud" để tạo code mock trên Postman.'); await loadProject(m.mock);
+    $('#newDlg').close(); toast('Đã tạo mock – dùng được ngay.'); await loadProject(m.mock);
   } catch (e) { $('#nmErr').textContent = e.message; }
 };
 

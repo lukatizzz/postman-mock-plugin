@@ -1,24 +1,20 @@
-# postman-mock plugin (PoC)
+# postman-mock plugin
 
-Plugin cho **Claude Code** và **Codex**: từ file OpenAPI YAML → tạo collection, example cho từng API và mock server trên **Postman (gói Free)**, rồi dùng ngôn ngữ tự nhiên để set response cho từng trường hợp cụ thể. Có thêm mock local miễn phí, gọi không giới hạn.
+Plugin cho **Claude Code** và **Codex**:
+- **Postman**: OpenAPI YAML → Spec + collection (example cho từng status, đã chuẩn hoá) → giữ đồng bộ khi file yml đổi.
+- **Mock Hub**: mock server chạy trên collection đó – dữ liệu mock theo flow, case có điều kiện, bật/tắt theo flow, Mock/Real từng API, dashboard + MCP cho team. Sửa là có hiệu lực ngay.
 
 ## Yêu cầu
-- Tài khoản Postman Free + API key (https://postman.co/settings/me/api-keys), đặt vào **biến môi trường người dùng** `POSTMAN_API_KEY`. Không dán key vào chat.
-- Node.js 18+ (https://nodejs.org).
+- Postman API key (https://postman.co/settings/me/api-keys) trong biến môi trường `POSTMAN_API_KEY`. Không dán key vào chat.
+- Node.js 18+.
 
 ## Cài đặt
-
 Claude Code:
 ```
-/plugin marketplace add <org>/postman-mock-plugin      # hoặc đường dẫn local tới thư mục này
+/plugin marketplace add <org>/postman-mock-plugin
 /plugin install postman-mock@postman-mock-tools
 ```
-
-Codex CLI:
-```
-codex plugin marketplace add <org>/postman-mock-plugin
-```
-rồi mở `/plugins` để cài. Đăng nhập MCP bằng `codex mcp login postman` (OAuth), hoặc thêm vào `~/.codex/config.toml`:
+Codex CLI: `codex plugin marketplace add <org>/postman-mock-plugin`, rồi `/plugins`. Postman MCP: `codex mcp login postman`, hoặc trong `~/.codex/config.toml`:
 ```toml
 [mcp_servers.postman]
 url = "https://mcp.postman.com/mcp"
@@ -26,31 +22,23 @@ bearer_token_env_var = "POSTMAN_API_KEY"
 ```
 
 ## Skills
-
 | Skill | Claude | Codex | Việc làm |
 |---|---|---|---|
-| mock-setup | `/postman-mock:mock-setup` | `$mock-setup` | Kiểm tra key, MCP, Node, quota; chọn workspace |
-| mock-import | `/postman-mock:mock-import api/openapi.yaml` | `$mock-import` | Spec → collection → example → mock |
-| mock-set | `/postman-mock:mock-set GET /pets/999 trả 404` | `$mock-set` | Set response cho case cụ thể |
-| mock-list | `/postman-mock:mock-list` | `$mock-list` | Xem mock URL, API, scenario |
-| mock-reset | `/postman-mock:mock-reset` | `$mock-reset` | Xoá scenario / tắt lỗi toàn cục |
-| mock-local | `/postman-mock:mock-local` | `$mock-local` | Chạy mock local (không tốn quota) |
-| mock-app | `/postman-mock:mock-app` | `$mock-app` | Code mock JavaScript lưu trên cloud (Mocks của Postman), scenario qua `x-mock-scenario`, tuỳ chọn stateful |
-| mock-dashboard | `/postman-mock:mock-dashboard` | `$mock-dashboard` | Mock Hub: dashboard (flow, case có điều kiện, bật/tắt theo flow, Mock/Real), MCP cho team, gateway + bảng route |
+| mock-setup | `/postman-mock:mock-setup` | `$mock-setup` | Kiểm tra key, Postman MCP, Node, quota API; chọn workspace |
+| mock-import | `/postman-mock:mock-import api/openapi.yaml` | `$mock-import` | Spec → collection → chuẩn hoá example → tạo mock trên Hub (spec đã import thì đồng bộ) |
+| mock-dashboard | `/postman-mock:mock-dashboard` | `$mock-dashboard` | Mock Hub: chạy server, tạo dữ liệu mock, flow, Mock/Real, đồng bộ spec, MCP cho team |
 
-Cũng có thể nói tự nhiên: *"tạo mock từ api/openapi.yaml"*, *"cho API login trả 401 khi password là wrong"*.
+Nói tự nhiên cũng được: *"tạo collection và mock từ api/openapi.yaml"*, *"API login trả 401 khi password là wrong"*, *"file yml vừa đổi, đồng bộ lại"*.
 
-## Script dùng trực tiếp
+## Scripts
 ```
 node plugins/postman-mock/scripts/postman-rest.mjs me
-node plugins/postman-mock/scripts/postman-rest.mjs import-openapi examples/petstore.yaml --workspace <id>
 node plugins/postman-mock/scripts/postman-rest.mjs create-spec api.yml --workspace <id>
 node plugins/postman-mock/scripts/postman-rest.mjs generate-collection <specId>
 node plugins/postman-mock/scripts/postman-rest.mjs normalize-collection <collectionUid>
-node plugins/postman-mock/scripts/postman-rest.mjs create-mock <collectionUid> --workspace <id>
-node plugins/postman-mock/scripts/postman-rest.mjs export-collection <collectionUid>
-node plugins/postman-mock/scripts/verify-mock.mjs .postman-mock/collection.json <mockUrl>
-node plugins/postman-mock/scripts/local-mock.mjs --collection .postman-mock/collection.json --port 4010
+node plugins/postman-mock/scripts/spec-sync.mjs <projectRoot> [--dry-run]
+node plugins/postman-mock/scripts/dashboard.mjs --port 4800 --project <name>
+node plugins/postman-mock/scripts/verify-mock.mjs .postman-mock/collections/<uid>.json http://localhost:4800/gw/<project>/<mock>
 ```
 
 ## Test
